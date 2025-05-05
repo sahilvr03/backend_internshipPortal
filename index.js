@@ -6,6 +6,7 @@ const path = require("path");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const fs = require("fs");
+require('dotenv').config();
 
 const app = express();
 app.use(express.json());
@@ -91,12 +92,16 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB max file size
 });
 
+
+app.get('/', (req, res) => res.json({ message: 'API is working' }));
+
 // Serve static files from upload directories
 app.use("/uploads", express.static(uploadDir));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-mongoose.connect("mongodb+srv://sahilvr03:Vijay9271@cluster0.wzcvn7n.mongodb.net/", {
-
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 10000
 })
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => {
