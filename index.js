@@ -1,11 +1,8 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const multer = require("multer");
-const path = require("path");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const fs = require("fs");
 require('dotenv').config();
 
 const app = express();
@@ -34,69 +31,7 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// ✅ **Enhanced File Upload Configuration**
-// Create upload directories if they don't exist
-const uploadDir = path.join(__dirname, "uploads");
-const imageDir = path.join(uploadDir, "images");
-const documentDir = path.join(uploadDir, "documents");
-const videoDir = path.join(uploadDir, "videos");
-
-[uploadDir, imageDir, documentDir, videoDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
-
-// Configure multer with file type validation
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    let uploadPath = uploadDir;
-    
-    // Determine file type based on mimetype
-    if (file.mimetype.startsWith('image/')) {
-      uploadPath = imageDir;
-    } else if (file.mimetype.startsWith('video/')) {
-      uploadPath = videoDir;
-    } else {
-      uploadPath = documentDir;
-    }
-    
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    // Create safer filenames by removing spaces and special characters
-    const fileName = file.originalname.replace(/\s+/g, '_').toLowerCase();
-    cb(null, `${Date.now()}-${fileName}`);
-  },
-});
-
-// Add file validation
-const fileFilter = (req, file, cb) => {
-  // Define allowed mime types
-  const allowedTypes = [
-    'image/jpeg', 'image/png', 'image/gif', 
-    'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'video/mp4', 'video/quicktime', 'video/x-msvideo'
-  ];
-  
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Unsupported file type'), false);
-  }
-};
-
-const upload = multer({ 
-  storage,
-  fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB max file size
-});
-
-
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
-
-// Serve static files from upload directories
-app.use("/uploads", express.static(uploadDir));
 
 // ✅ **MongoDB Connection with Better Error Handling**
 mongoose.connect(process.env.MONGODB_URI, {
@@ -113,7 +48,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 const mediaSchema = new mongoose.Schema({
   fileName: String,
   fileType: String,
-  filePath: String,
+  fileUrl: String, // Changed from filePath to fileUrl for external URLs
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Student' },
   uploadDate: { type: Date, default: Date.now },
   projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' }
@@ -165,8 +100,6 @@ const progressUpdateSchema = new mongoose.Schema({
   feedbackDate: { type: Date }
 });
 
-// Update the studentSchema with these additional fields
-
 const studentSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
@@ -186,7 +119,6 @@ const studentSchema = new mongoose.Schema({
   progressUpdates: [progressUpdateSchema],
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
-  // Add these new fields for admin settings
   lastLogin: { type: Date, default: Date.now },
   notificationSettings: {
     emailNotifications: { type: Boolean, default: true },
@@ -235,7 +167,7 @@ const pastInternSchema = new mongoose.Schema({
     attachments: [{
       fileName: String,
       fileType: String,
-      filePath: String
+      fileUrl: String
     }]
   }],
   completionRate: Number,
@@ -371,7 +303,7 @@ app.get("/api/admin/projects/:id", async (req, res) => {
       .populate('assignedTo', 'name email')
       .populate({
         path: 'attachments',
-        select: 'fileName fileType filePath uploadDate uploadedBy',
+        select: 'fileName fileType fileUrl uploadDate uploadedBy',
       });
       
     if (!project) {
@@ -420,7 +352,6 @@ app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Error updating project" });
   }
 });
-
 
 // **📋 Record Student Attendance**
 app.post("/api/admin/attendance/:studentId", async (req, res) => {
@@ -606,84 +537,6 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
   }
 });
 
-// **📤 Upload Files for Assigned Projects - Enhanced with Multiple File Types**
-app.post("/api/student/upload/:projectId", authenticateToken, upload.single("file"), async (req, res) => {
-  try {
-    const { projectId } = req.params;
-    const studentId = req.user.id; // Get student ID from the auth token
-    
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-    
-    // Verify student exists
-    const student = await Student.findById(studentId);
-    if (!student) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-    
-    // Verify project exists
-    const project = await Project.findById(projectId);
-    if (!project) {
-      return res.status(404).json({ error: "Project not found" });
-    }
-    
-    // Verify the student is assigned to this project
-    if (!project.assignedTo.includes(studentId) && req.user.role !== 'admin') {
-      return res.status(403).json({ error: "You don't have access to this project" });
-    }
-    
-    // Check if project is completed
-    if (project.status === "Completed") {
-      return res.status(400).json({ error: "Cannot upload to a completed project" });
-    }
-    
-    // Create media entry
-    const media = new Media({
-      fileName: req.file.originalname,
-      fileType: req.file.mimetype,
-      filePath: req.file.path,
-      uploadedBy: studentId,
-      projectId: projectId
-    });
-    
-    await media.save();
-    
-    // Add to project attachments
-    project.attachments = project.attachments || [];
-    project.attachments.push(media);
-    
-    // Update status if needed
-    if (project.status === "Not Started") {
-      project.status = "In Progress";
-    }
-    
-    project.lastModified = new Date();
-    await project.save();
-    
-    // Add to student's progress updates
-    student.progressUpdates = student.progressUpdates || [];
-    student.progressUpdates.push({
-      date: new Date(),
-      content: `Uploaded file: ${req.file.originalname} for project ${project.title}`,
-      attachments: [req.file.path]
-    });
-    await student.save();
-    
-    res.json({
-      message: "File uploaded successfully!",
-      file: {
-        name: req.file.originalname,
-        path: req.file.path,
-        type: req.file.mimetype
-      }
-    });
-  } catch (error) {
-    console.error("Error uploading file:", error);
-    res.status(500).json({ error: "File upload failed" });
-  }
-});
-
 // **👤 Update Student Profile**
 app.put("/api/student/profile", authenticateToken, async (req, res) => {
   try {
@@ -718,51 +571,11 @@ app.put("/api/student/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// **👤 Upload Profile Picture**
-app.post("/api/student/profile-picture", authenticateToken, upload.single("profilePicture"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-    
-    // Verify file is an image
-    if (!req.file.mimetype.startsWith('image/')) {
-      return res.status(400).json({ error: "File must be an image" });
-    }
-    
-    const student = await Student.findById(req.user.id);
-    if (!student) {
-      return res.status(404).json({ error: "Student not found" });
-    }
-    
-    // If there's an existing profile picture, remove it
-    if (student.profilePicture) {
-      try {
-        fs.unlinkSync(student.profilePicture);
-      } catch (err) {
-        console.error("Error deleting previous profile picture:", err);
-      }
-    }
-    
-    // Update profile picture
-    student.profilePicture = req.file.path;
-    await student.save();
-    
-    res.json({
-      message: "Profile picture updated successfully",
-      profilePicture: req.file.path
-    });
-  } catch (error) {
-    console.error("Error uploading profile picture:", error);
-    res.status(500).json({ error: "Error uploading profile picture" });
-  }
-});
-
 // **📌 Get Past Interns**
 app.get("/api/interns/past", authenticateToken, async (req, res) => {
   try {
     const pastInterns = await PastIntern.find()
-      .populate('student', 'name email username profilePicture')
+      .populate('student', 'name email username')
       .sort({ deletedAt: -1 }); // Sort by most recent first
 
     // Calculate completion rates for each past intern
@@ -794,7 +607,7 @@ app.get("/api/interns/past", authenticateToken, async (req, res) => {
 app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   try {
     const pastIntern = await PastIntern.findById(req.params.id)
-      .populate('student', 'name email username profilePicture contactNumber university');
+      .populate('student', 'name email username contactNumber university');
 
     if (!pastIntern) {
       return res.status(404).json({ error: "Past intern not found" });
@@ -835,11 +648,8 @@ app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
 });
 
 // **📌 Add New Intern**
-
-// Get all interns (current)
 app.get("/api/interns", async (req, res) => {
   try {
-    // Get all interns that aren't deleted
     const interns = await Intern.find({ 
       deletedAt: { $exists: false } 
     }).populate('student', 'name email username');
@@ -861,12 +671,10 @@ app.get("/api/interns", async (req, res) => {
         university: intern.university,
         dailyProgress: intern.dailyProgress || [],
         attendance: intern.attendance || [],
-        resume: intern.resume,
         student: intern.student
       };
     });
     
-    console.log(`Found ${formattedInterns.length} current interns`);
     res.json(formattedInterns);
   } catch (error) {
     console.error("Error fetching interns:", error);
@@ -874,27 +682,15 @@ app.get("/api/interns", async (req, res) => {
   }
 });
 
-// Add this endpoint for health checks
-
-
-app.post("/api/interns", upload.single("resume"), async (req, res) => {
+app.post("/api/interns", async (req, res) => {
   try {
     const { name, email, studentId, duration, username, password, tasks } = req.body;
-    
-    console.log("Adding new intern with data:", { 
-      name, 
-      email, 
-      duration: duration || 3,
-      hasResume: !!req.file,
-      hasTasks: !!tasks 
-    });
     
     // Create a new intern
     const newIntern = new Intern({
       name,
       email,
       duration: duration || 3, // Default 3 months if not specified
-      resume: req.file ? req.file.path : undefined,
       student: studentId
     });
     
@@ -919,8 +715,6 @@ app.post("/api/interns", upload.single("resume"), async (req, res) => {
     
     // If username and password are provided, create or update student account
     if (username && password) {
-      console.log("Creating student account with username:", username);
-      
       // Check if username already exists
       const existingUser = await Student.findOne({ username });
       if (existingUser && (!studentId || existingUser._id.toString() !== studentId)) {
@@ -947,8 +741,6 @@ app.post("/api/interns", upload.single("resume"), async (req, res) => {
         });
         
         studentAccount = await newStudent.save();
-        console.log("New student account created:", studentAccount._id);
-        
         // Link the student to the intern
         newIntern.student = studentAccount._id;
       }
@@ -976,14 +768,11 @@ app.post("/api/interns", upload.single("resume"), async (req, res) => {
           await Student.findByIdAndUpdate(studentAccount._id, {
             $push: { assignedProjects: { $each: projectIds } }
           });
-          
-          console.log(`${projectIds.length} projects created and assigned to student`);
         }
       }
     }
     
     await newIntern.save();
-    console.log("Intern saved successfully:", newIntern._id);
     
     res.status(201).json({
       message: "Intern added successfully!",
@@ -999,9 +788,8 @@ app.post("/api/interns", upload.single("resume"), async (req, res) => {
   }
 });
 
-// Also update the intern update endpoint to handle project changes
 // Update Intern endpoint
-app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
+app.put("/api/interns/:id", async (req, res) => {
   try {
     const internId = req.params.id;
     const { name, email, joiningDate, duration, tasks } = req.body;
@@ -1018,11 +806,6 @@ app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
     if (joiningDate) intern.joiningDate = joiningDate;
     if (duration) intern.duration = duration;
     
-    // Handle resume file if provided
-    if (req.file) {
-      intern.resume = req.file.path;
-    }
-    
     // Handle tasks update
     if (tasks) {
       let tasksArray = [];
@@ -1035,8 +818,6 @@ app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
       
       // Get original tasks to compare
       const oldTasks = intern.tasks || [];
-      console.log("Old tasks:", oldTasks);
-      console.log("New tasks:", tasksArray);
       
       // Store updated tasks in intern object
       intern.tasks = tasksArray;
@@ -1047,7 +828,6 @@ app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
         
         // Find new tasks (not in old tasks)
         const newTasks = tasksArray.filter(task => !oldTasks.includes(task));
-        console.log("New tasks to create projects for:", newTasks);
         
         // Create projects for new tasks
         if (newTasks.length > 0) {
@@ -1072,8 +852,6 @@ app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
             await Student.findByIdAndUpdate(studentId, {
               $push: { assignedProjects: { $each: projectIds } }
             });
-            
-            console.log(`${projectIds.length} new projects created and assigned to student`);
           }
         }
       }
@@ -1092,7 +870,6 @@ app.put("/api/interns/:id", upload.single("resume"), async (req, res) => {
 });
 
 // **📌 Update Intern Progress**
-// Add or update intern progress
 app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
   try {
     const { content } = req.body;
@@ -1155,17 +932,8 @@ app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
       );
     }
     
-    // Delete associated media files
+    // Delete associated media entries
     if (project.attachments && project.attachments.length > 0) {
-      project.attachments.forEach(attachment => {
-        try {
-          if (fs.existsSync(attachment.filePath)) {
-            fs.unlinkSync(attachment.filePath);
-          }
-        } catch (err) {
-          console.error("Error deleting file:", err);
-        }
-      });
       await Media.deleteMany({ projectId: project._id });
     }
     
@@ -1213,7 +981,6 @@ app.post("/api/interns/:id/attendance", async (req, res) => {
 });
 
 // **📌 Delete an Intern (Move to Past Interns)**
-
 app.delete("/api/interns/:id", async (req, res) => {
   try {
     const intern = await Intern.findById(req.params.id);
@@ -1232,8 +999,6 @@ app.delete("/api/interns/:id", async (req, res) => {
       const student = await Student.findById(studentId);
       
       if (student && student.assignedProjects && student.assignedProjects.length > 0) {
-        console.log(`Deleting ${student.assignedProjects.length} projects for intern ${intern.name}`);
-        
         // Retrieve projects before deletion to store their information
         const projects = await Project.find({ _id: { $in: student.assignedProjects } });
         
@@ -1246,7 +1011,6 @@ app.delete("/api/interns/:id", async (req, res) => {
         
         // Delete all projects assigned to this student
         await Project.deleteMany({ _id: { $in: student.assignedProjects } });
-        console.log("Projects deleted successfully");
       }
     }
     
@@ -1337,7 +1101,6 @@ app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
 });
 
 // **📌 Mark attendance**
-
 app.post("/api/admin/student/:id/attendance", async (req, res) => {
   try {
     const { date, status, timeIn, timeOut, notes } = req.body;
@@ -1356,8 +1119,7 @@ app.post("/api/admin/student/:id/attendance", async (req, res) => {
     await student.save();
     
     res.status(201).json({ 
-      message: "Attendance recorded successfully!",
-      attendance: student.attendance[student.attendance.length - 1]
+      message: "Attendance recorded successfully", attendance: student.attendance[student.attendance.length - 1]
     });
   } catch (error) {
     console.error("Error recording attendance:", error);
