@@ -34,7 +34,7 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-mongoose.connect(process.env.MONGODB_URI, {
+await mongoose.connect(process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
   connectTimeoutMS: 10000,
   bufferCommands: false
