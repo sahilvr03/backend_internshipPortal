@@ -34,26 +34,34 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-await mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 10000,
-  bufferCommands: false
-})
-  .then(() => console.log("✅ MongoDB Connected"), {
+let conn = null;
+const connectToDatabase = async () => {
+  if (conn == null) {
+    console.log('Creating new MongoDB connection...');
+    try {
+      conn = mongoose.connect(process.env.MONGODB_URI, {
         serverSelectionTimeoutMS: 5000,
         connectTimeoutMS: 10000,
         bufferCommands: false
-      })
-  .catch((err) => {
-    console.error("❌ MongoDB Connection Error:", err);
-    process.exit(1); // Exit on database connection failure
-  });
+      });
+      await conn;
+      console.log('✅ MongoDB Connected');
+    } catch (err) {
+      console.error('❌ MongoDB Connection Error:', err);
+      throw err;
+    }
+  }
+  return conn;
+};
+
+// Pre-warm connection
+connectToDatabase().catch(err => console.error('Initial connection failed:', err));
 
 // ✅ **Enhanced Schema Definitions**
 const mediaSchema = new mongoose.Schema({
   fileName: String,
   fileType: String,
-  fileUrl: String, // Changed from filePath to fileUrl for external URLs
+  fileUrl: String,
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Student' },
   uploadDate: { type: Date, default: Date.now },
   projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' }
@@ -191,9 +199,9 @@ const PastIntern = mongoose.model("PastIntern", pastInternSchema);
 // **🔐 Add Student with Login Credentials**
 app.post("/api/admin/students", async (req, res) => {
   try {
+    await connectToDatabase();
     const { name, email, username, password, program, university, graduationYear, contactNumber, skills } = req.body;
     
-    // Check if username or email already exists
     const existingUser = await Student.findOne({ $or: [{ email }, { username }] });
     if (existingUser) {
       return res.status(400).json({ error: "Username or email already exists" });
@@ -228,8 +236,9 @@ app.post("/api/admin/students", async (req, res) => {
 // **📋 Get All Students**
 app.get("/api/admin/students", async (req, res) => {
   try {
+    await connectToDatabase();
     const students = await Student.find()
-      .select('-password') // Exclude password field
+      .select('-password')
       .populate('assignedProjects');
       
     res.json(students);
@@ -242,6 +251,7 @@ app.get("/api/admin/students", async (req, res) => {
 // **📋 Get Single Student**
 app.get("/api/admin/students/:id", async (req, res) => {
   try {
+    await connectToDatabase();
     const student = await Student.findById(req.params.id)
       .select('-password')
       .populate('assignedProjects');
@@ -258,6 +268,7 @@ app.get("/api/admin/students/:id", async (req, res) => {
 // Create a new project
 app.post("/api/admin/projects", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { title, description, assignedTo, tasks, endDate } = req.body;
     
     const newProject = new Project({
@@ -270,7 +281,6 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
     
     const savedProject = await newProject.save();
     
-    // Update assigned students with this project
     if (assignedTo && assignedTo.length > 0) {
       await Student.updateMany(
         { _id: { $in: assignedTo } },
@@ -291,6 +301,7 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
 // **📋 Get All Projects**
 app.get("/api/admin/projects", async (req, res) => {
   try {
+    await connectToDatabase();
     const projects = await Project.find()
       .populate('assignedTo', 'name email');
     
@@ -304,6 +315,7 @@ app.get("/api/admin/projects", async (req, res) => {
 // Get Single Project Details
 app.get("/api/admin/projects/:id", async (req, res) => {
   try {
+    await connectToDatabase();
     const project = await Project.findById(req.params.id)
       .populate('assignedTo', 'name email')
       .populate({
@@ -325,19 +337,18 @@ app.get("/api/admin/projects/:id", async (req, res) => {
 // **📋 Update Project Status**
 app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { title, description, status, assignedTo, tasks, feedback } = req.body;
     
     const project = await Project.findById(req.params.id);
     if (!project) return res.status(404).json({ error: "Project not found" });
     
-    // Update fields if provided
     if (title) project.title = title;
     if (description) project.description = description;
     if (status) project.status = status;
     if (assignedTo) project.assignedTo = assignedTo;
     if (tasks) project.tasks = tasks;
     
-    // Add feedback if provided
     if (feedback) {
       project.feedback.push({
         comment: feedback,
@@ -361,6 +372,7 @@ app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
 // **📋 Record Student Attendance**
 app.post("/api/admin/attendance/:studentId", async (req, res) => {
   try {
+    await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
     
     const student = await Student.findById(req.params.studentId);
@@ -389,18 +401,17 @@ app.post("/api/admin/attendance/:studentId", async (req, res) => {
 // **🔐 Student Login**
 app.post("/api/student/login", async (req, res) => {
   try {
+    await connectToDatabase();
     const { username, email, password } = req.body;
     
     if (!password) {
       return res.status(400).json({ error: "Password is required" });
     }
     
-    // Check if we have either username or email
     if (!username && !email) {
       return res.status(400).json({ error: "Username or email is required" });
     }
     
-    // Find the student by username or email
     let student;
     if (username) {
       student = await Student.findOne({ username });
@@ -412,21 +423,18 @@ app.post("/api/student/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
     
-    // Check if password matches
     const isMatch = await bcrypt.compare(password, student.password);
     
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
     
-    // Generate JWT token
     const token = jwt.sign(
       { id: student._id, role: student.role || 'student' },
       "secret_key",
       { expiresIn: "1d" }
     );
     
-    // Update last active timestamp
     student.lastActive = new Date();
     await student.save();
     
@@ -436,7 +444,6 @@ app.post("/api/student/login", async (req, res) => {
       name: student.name,
       role: student.role || 'student'
     });
-    
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Server error during login" });
@@ -446,7 +453,7 @@ app.post("/api/student/login", async (req, res) => {
 // **👤 Get Student Profile & Assigned Projects**
 app.get("/api/student/profile/:id", authenticateToken, async (req, res) => {
   try {
-    // Verify the student is accessing their own data
+    await connectToDatabase();
     if (req.user.id !== req.params.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied" });
     }
@@ -469,6 +476,7 @@ app.get("/api/student/profile/:id", authenticateToken, async (req, res) => {
 // **👤 Get Student's Project Details**
 app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { projectId } = req.params;
     
     const project = await Project.findById(projectId);
@@ -476,7 +484,6 @@ app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) 
       return res.status(404).json({ error: "Project not found" });
     }
     
-    // Verify the student is assigned to this project
     const student = await Student.findById(req.user.id);
     if (!student.assignedProjects.includes(projectId) && req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied" });
@@ -492,6 +499,7 @@ app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) 
 // **📤 Submit Project Update**
 app.post("/api/student/progress/:projectId", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { projectId } = req.params;
     const { content } = req.body;
     
@@ -499,13 +507,11 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
       return res.status(400).json({ error: "Progress update content is required" });
     }
     
-    // Verify student is assigned to this project
     const student = await Student.findById(req.user.id);
     if (!student.assignedProjects.includes(projectId) && req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied" });
     }
     
-    // Add progress update
     const progressUpdate = {
       date: new Date(),
       content
@@ -513,7 +519,6 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
     
     student.progressUpdates.push(progressUpdate);
     
-    // Update project status to "In Progress" if it was "Not Started"
     const project = await Project.findById(projectId);
     if (project && project.status === "Not Started") {
       project.status = "In Progress";
@@ -521,7 +526,6 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
       await project.save();
     }
     
-    // Add feedback to project
     if (project) {
       project.feedback.push({
         comment: `Progress update: ${content}`,
@@ -545,15 +549,14 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
 // **👤 Update Student Profile**
 app.put("/api/student/profile", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { contactNumber, skills, bio } = req.body;
     
-    // Find student by id from token
     const student = await Student.findById(req.user.id);
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
     
-    // Update fields if provided
     if (contactNumber) student.contactNumber = contactNumber;
     if (skills) student.skills = skills;
     if (bio) student.bio = bio;
@@ -579,11 +582,11 @@ app.put("/api/student/profile", authenticateToken, async (req, res) => {
 // **📌 Get Past Interns**
 app.get("/api/interns/past", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const pastInterns = await PastIntern.find()
       .populate('student', 'name email username')
-      .sort({ deletedAt: -1 }); // Sort by most recent first
+      .sort({ deletedAt: -1 });
 
-    // Calculate completion rates for each past intern
     const pastInternsWithStats = pastInterns.map(intern => {
       const completedProjects = intern.deletedProjects.filter(
         p => p.status === "Completed"
@@ -611,6 +614,7 @@ app.get("/api/interns/past", authenticateToken, async (req, res) => {
 // **📌 Get Single Intern Details**
 app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const pastIntern = await PastIntern.findById(req.params.id)
       .populate('student', 'name email username contactNumber university');
 
@@ -618,7 +622,6 @@ app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Past intern not found" });
     }
 
-    // Calculate detailed stats
     const completedProjects = pastIntern.deletedProjects.filter(
       p => p.status === "Completed"
     );
@@ -655,11 +658,11 @@ app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
 // **📌 Add New Intern**
 app.get("/api/interns", async (req, res) => {
   try {
+    await connectToDatabase();
     const interns = await Intern.find({ 
       deletedAt: { $exists: false } 
     }).populate('student', 'name email username');
     
-    // Format data for frontend
     const formattedInterns = interns.map(intern => {
       const studentName = intern.student ? intern.student.name : intern.name;
       const studentEmail = intern.student ? intern.student.email : intern.email;
@@ -689,55 +692,44 @@ app.get("/api/interns", async (req, res) => {
 
 app.post("/api/interns", async (req, res) => {
   try {
+    await connectToDatabase();
     const { name, email, studentId, duration, username, password, tasks } = req.body;
     
-    // Create a new intern
     const newIntern = new Intern({
       name,
       email,
-      duration: duration || 3, // Default 3 months if not specified
+      duration: duration || 3,
       student: studentId
     });
     
     let studentAccount = null;
     let tasksArray = [];
     
-    // Parse tasks
     if (tasks) {
-      try {
-        if (typeof tasks === 'string') {
-          tasksArray = tasks.split(',').map(task => task.trim()).filter(task => task);
-        } else if (Array.isArray(tasks)) {
-          tasksArray = tasks;
-        }
-        
-        // Store tasks in intern object
-        newIntern.tasks = tasksArray;
-      } catch (error) {
-        console.error("Error parsing tasks:", error);
+      if (typeof tasks === 'string') {
+        tasksArray = tasks.split(',').map(task => task.trim()).filter(task => task);
+      } else if (Array.isArray(tasks)) {
+        tasksArray = tasks;
       }
+      
+      newIntern.tasks = tasksArray;
     }
     
-    // If username and password are provided, create or update student account
     if (username && password) {
-      // Check if username already exists
       const existingUser = await Student.findOne({ username });
       if (existingUser && (!studentId || existingUser._id.toString() !== studentId)) {
         return res.status(400).json({ error: "Username already exists" });
       }
       
-      // Hash the password      
       const hashedPassword = await bcrypt.hash(password, 10);
       
       if (studentId) {
-        // Update existing student
         await Student.findByIdAndUpdate(studentId, {
           username,
           password: hashedPassword
         });
         studentAccount = await Student.findById(studentId);
       } else {
-        // Create new student
         const newStudent = new Student({
           name,
           email,
@@ -746,15 +738,12 @@ app.post("/api/interns", async (req, res) => {
         });
         
         studentAccount = await newStudent.save();
-        // Link the student to the intern
         newIntern.student = studentAccount._id;
       }
       
-      // Create projects for each task if student account exists
       if (studentAccount && tasksArray.length > 0) {
         const projectIds = [];
         
-        // Create a project for each task
         for (const taskName of tasksArray) {
           const project = new Project({
             title: taskName,
@@ -768,7 +757,6 @@ app.post("/api/interns", async (req, res) => {
           projectIds.push(savedProject._id);
         }
         
-        // Add projects to student's assignedProjects
         if (projectIds.length > 0) {
           await Student.findByIdAndUpdate(studentAccount._id, {
             $push: { assignedProjects: { $each: projectIds } }
@@ -796,22 +784,20 @@ app.post("/api/interns", async (req, res) => {
 // Update Intern endpoint
 app.put("/api/interns/:id", async (req, res) => {
   try {
+    await connectToDatabase();
     const internId = req.params.id;
     const { name, email, joiningDate, duration, tasks } = req.body;
     
-    // Find the intern
     const intern = await Intern.findById(internId);
     if (!intern) {
       return res.status(404).json({ error: "Intern not found" });
     }
     
-    // Update basic fields
     if (name) intern.name = name;
     if (email) intern.email = email;
     if (joiningDate) intern.joiningDate = joiningDate;
     if (duration) intern.duration = duration;
     
-    // Handle tasks update
     if (tasks) {
       let tasksArray = [];
       
@@ -821,24 +807,18 @@ app.put("/api/interns/:id", async (req, res) => {
         tasksArray = tasks;
       }
       
-      // Get original tasks to compare
       const oldTasks = intern.tasks || [];
       
-      // Store updated tasks in intern object
       intern.tasks = tasksArray;
       
-      // If there's a student account, create projects for new tasks
       if (intern.student) {
         const studentId = intern.student;
         
-        // Find new tasks (not in old tasks)
         const newTasks = tasksArray.filter(task => !oldTasks.includes(task));
         
-        // Create projects for new tasks
         if (newTasks.length > 0) {
           const projectIds = [];
           
-          // Create a project for each new task
           for (const taskName of newTasks) {
             const project = new Project({
               title: taskName,
@@ -852,7 +832,6 @@ app.put("/api/interns/:id", async (req, res) => {
             projectIds.push(savedProject._id);
           }
           
-          // Add projects to student's assignedProjects
           if (projectIds.length > 0) {
             await Student.findByIdAndUpdate(studentId, {
               $push: { assignedProjects: { $each: projectIds } }
@@ -877,6 +856,7 @@ app.put("/api/interns/:id", async (req, res) => {
 // **📌 Update Intern Progress**
 app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { content } = req.body;
     
     if (!content) {
@@ -889,18 +869,15 @@ app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Intern not found" });
     }
     
-    // Add progress update
     intern.dailyProgress.push({
       date: new Date(),
       content
     });
     
-    // Calculate and update overall progress
     const totalTasks = intern.tasks ? intern.tasks.length : 0;
     const completedTasks = intern.dailyProgress.length;
     
     if (totalTasks > 0) {
-      // Cap at 100% maximum
       const progressPercent = Math.min(
         Math.round((completedTasks / totalTasks) * 100),
         100
@@ -924,12 +901,12 @@ app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
 // Delete project
 app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const project = await Project.findById(req.params.id);
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
     
-    // Remove project from students' assigned projects
     if (project.assignedTo && project.assignedTo.length > 0) {
       await Student.updateMany(
         { _id: { $in: project.assignedTo } },
@@ -937,12 +914,10 @@ app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
       );
     }
     
-    // Delete associated media entries
     if (project.attachments && project.attachments.length > 0) {
       await Media.deleteMany({ projectId: project._id });
     }
     
-    // Delete the project
     await Project.findByIdAndDelete(req.params.id);
     
     res.json({ 
@@ -958,6 +933,7 @@ app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
 // **📌 Mark Intern Attendance**
 app.post("/api/interns/:id/attendance", async (req, res) => {
   try {
+    await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
     
     const intern = await Intern.findById(req.params.id);
@@ -988,6 +964,7 @@ app.post("/api/interns/:id/attendance", async (req, res) => {
 // **📌 Delete an Intern (Move to Past Interns)**
 app.delete("/api/interns/:id", async (req, res) => {
   try {
+    await connectToDatabase();
     const intern = await Intern.findById(req.params.id);
     if (!intern) {
       return res.status(404).json({ error: "Intern not found" });
@@ -995,31 +972,24 @@ app.delete("/api/interns/:id", async (req, res) => {
     
     let deletedProjectsInfo = [];
     
-    // Get the student ID associated with the intern
     const studentId = intern.student;
     
-    // If there's an associated student account, find and delete their projects
     if (studentId) {
-      // First, get the student to find assigned projects
       const student = await Student.findById(studentId);
       
       if (student && student.assignedProjects && student.assignedProjects.length > 0) {
-        // Retrieve projects before deletion to store their information
         const projects = await Project.find({ _id: { $in: student.assignedProjects } });
         
-        // Store project information
         deletedProjectsInfo = projects.map(project => ({
           title: project.title,
           description: project.description,
           status: project.status
         }));
         
-        // Delete all projects assigned to this student
         await Project.deleteMany({ _id: { $in: student.assignedProjects } });
       }
     }
     
-    // Create a past intern entry with project information
     const pastIntern = new PastIntern({
       ...intern.toObject(),
       deletedProjects: deletedProjectsInfo
@@ -1027,7 +997,6 @@ app.delete("/api/interns/:id", async (req, res) => {
     
     await pastIntern.save();
     
-    // Delete the current intern
     await Intern.findByIdAndDelete(req.params.id);
     
     res.json({ 
@@ -1044,15 +1013,14 @@ app.delete("/api/interns/:id", async (req, res) => {
 // Add endpoint to update intern credentials
 app.put("/api/interns/:id/credentials", async (req, res) => {
   try {
+    await connectToDatabase();
     const { username, password } = req.body;
     
-    // Find the intern
     const intern = await Intern.findById(req.params.id);
     if (!intern) {
       return res.status(404).json({ error: "Intern not found" });
     }
     
-    // Check if username already exists (except for the current student)
     if (username) {
       const existingUser = await Student.findOne({ 
         username, 
@@ -1064,11 +1032,9 @@ app.put("/api/interns/:id/credentials", async (req, res) => {
       }
     }
     
-    // Update student credentials
     if (intern.student) {
       const updates = { username };
       
-      // Only update password if provided
       if (password) {
         updates.password = await bcrypt.hash(password, 10);
       }
@@ -1090,6 +1056,7 @@ app.put("/api/interns/:id/credentials", async (req, res) => {
 // Add endpoint to get student credentials (for admin only)
 app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
   try {
+    await connectToDatabase();
     const student = await Student.findById(req.params.studentId).select('username');
     
     if (!student) {
@@ -1108,6 +1075,7 @@ app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
 // **📌 Mark attendance**
 app.post("/api/admin/student/:id/attendance", async (req, res) => {
   try {
+    await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
     
     const student = await Student.findById(req.params.id);
@@ -1124,19 +1092,19 @@ app.post("/api/admin/student/:id/attendance", async (req, res) => {
     await student.save();
     
     res.status(201).json({ 
-      message: "Attendance recorded successfully", attendance: student.attendance[student.attendance.length - 1]
+      message: "Attendance recorded successfully", 
+      attendance: student.attendance[student.attendance.length - 1]
     });
   } catch (error) {
     console.error("Error recording attendance:", error);
     res.status(500).json({ error: "Error recording attendance" });
   }
-}
-);
+});
 
 // **📌 Get all attendance records for a student**
-
 app.get("/api/admin/student/:id/attendance", async (req, res) => {
   try {
+    await connectToDatabase();
     const student = await Student.findById(req.params.id).select('attendance');
     if (!student) return res.status(404).json({ error: "Student not found" });
     
@@ -1145,14 +1113,12 @@ app.get("/api/admin/student/:id/attendance", async (req, res) => {
     console.error("Error fetching attendance records:", error);
     res.status(500).json({ error: "Error fetching attendance records" });
   }
-}
-);
-
+});
 
 // **🔧 Get Admin Profile and Settings**
 app.get("/api/admin/profile", authenticateToken, async (req, res) => {
   try {
-    // Verify user is an admin
+    await connectToDatabase();
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1163,7 +1129,6 @@ app.get("/api/admin/profile", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Admin profile not found" });
     }
     
-    // Return admin profile data without password
     res.json({
       name: admin.name,
       email: admin.email,
@@ -1190,21 +1155,19 @@ app.get("/api/admin/profile", authenticateToken, async (req, res) => {
 // **🔧 Update Admin Profile**
 app.put("/api/admin/profile", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { name, email, username } = req.body;
     
-    // Verify user is an admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
     
-    // Find the admin
     const admin = await Student.findById(req.user.id);
     
     if (!admin) {
       return res.status(404).json({ error: "Admin profile not found" });
     }
     
-    // Check if email is unique (except for current admin)
     if (email && email !== admin.email) {
       const existingEmail = await Student.findOne({ email, _id: { $ne: req.user.id } });
       if (existingEmail) {
@@ -1212,7 +1175,6 @@ app.put("/api/admin/profile", authenticateToken, async (req, res) => {
       }
     }
     
-    // Check if username is unique (except for current admin)
     if (username && username !== admin.username) {
       const existingUsername = await Student.findOne({ username, _id: { $ne: req.user.id } });
       if (existingUsername) {
@@ -1220,7 +1182,6 @@ app.put("/api/admin/profile", authenticateToken, async (req, res) => {
       }
     }
     
-    // Update admin profile
     admin.name = name || admin.name;
     admin.email = email || admin.email;
     admin.username = username || admin.username;
@@ -1244,9 +1205,9 @@ app.put("/api/admin/profile", authenticateToken, async (req, res) => {
 // **🔧 Update Admin Password**
 app.put("/api/admin/password", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { currentPassword, newPassword } = req.body;
     
-    // Verify user is an admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1255,21 +1216,18 @@ app.put("/api/admin/password", authenticateToken, async (req, res) => {
       return res.status(400).json({ error: "Current password and new password are required" });
     }
     
-    // Find the admin
     const admin = await Student.findById(req.user.id);
     
     if (!admin) {
       return res.status(404).json({ error: "Admin profile not found" });
     }
     
-    // Verify current password
     const isMatch = await bcrypt.compare(currentPassword, admin.password);
     
     if (!isMatch) {
       return res.status(400).json({ error: "Current password is incorrect" });
     }
     
-    // Update password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
     admin.password = hashedPassword;
@@ -1286,9 +1244,9 @@ app.put("/api/admin/password", authenticateToken, async (req, res) => {
 // **🔧 Update Notification Settings**
 app.put("/api/admin/settings/notifications", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { emailNotifications, attendanceAlerts, projectUpdates, systemAlerts } = req.body;
     
-    // Verify user is an admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1299,12 +1257,10 @@ app.put("/api/admin/settings/notifications", authenticateToken, async (req, res)
       return res.status(404).json({ error: "Admin profile not found" });
     }
     
-    // Add notificationSettings if it doesn't exist
     if (!admin.notificationSettings) {
       admin.notificationSettings = {};
     }
     
-    // Update notification settings (maintain defaults if values not provided)
     admin.notificationSettings = {
       emailNotifications: emailNotifications !== undefined ? emailNotifications : true,
       attendanceAlerts: attendanceAlerts !== undefined ? attendanceAlerts : true,
@@ -1327,9 +1283,9 @@ app.put("/api/admin/settings/notifications", authenticateToken, async (req, res)
 // **🔧 Update Security Settings**
 app.put("/api/admin/settings/security", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { twoFactorAuth, requirePasswordReset, sessionTimeout } = req.body;
     
-    // Verify user is an admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1340,12 +1296,10 @@ app.put("/api/admin/settings/security", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Admin profile not found" });
     }
     
-    // Add securitySettings if it doesn't exist
     if (!admin.securitySettings) {
       admin.securitySettings = {};
     }
     
-    // Update security settings (maintain defaults if values not provided)
     admin.securitySettings = {
       twoFactorAuth: twoFactorAuth !== undefined ? twoFactorAuth : false,
       requirePasswordReset: requirePasswordReset !== undefined ? requirePasswordReset : false,
@@ -1364,12 +1318,10 @@ app.put("/api/admin/settings/security", authenticateToken, async (req, res) => {
   }
 });
 
-
 // ✅ **Error Handling Middleware**
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
   
-  // Handle multer errors
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({ error: "File is too large. Maximum size is 50MB." });
@@ -1377,7 +1329,6 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: `Upload error: ${err.message}` });
   }
   
-  // Handle other errors
   res.status(500).json({ 
     error: "An unexpected error occurred",
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -1395,27 +1346,25 @@ app.get("/health", (req, res) => {
 // **📊 Student: Submit Progress Update**
 app.post("/api/progress-updates", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { content } = req.body;
     
     if (!content) {
       return res.status(400).json({ error: "Progress update content is required" });
     }
     
-    // Find the student
     const student = await Student.findById(req.user.id);
     
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
     
-    // Create progress update
     const newProgressUpdate = {
       content,
       timestamp: new Date(),
       hasAdminFeedback: false
     };
     
-    // Add to student's progress updates
     if (!student.progressUpdates) {
       student.progressUpdates = [];
     }
@@ -1423,7 +1372,6 @@ app.post("/api/progress-updates", authenticateToken, async (req, res) => {
     student.progressUpdates.push(newProgressUpdate);
     await student.save();
     
-    // Return the new progress update
     const createdUpdate = student.progressUpdates[student.progressUpdates.length - 1];
     
     res.status(201).json({
@@ -1443,14 +1391,13 @@ app.post("/api/progress-updates", authenticateToken, async (req, res) => {
 // **📋 Student: Get All Progress Updates**
 app.get("/api/progress-updates", authenticateToken, async (req, res) => {
   try {
-    // Find the student
+    await connectToDatabase();
     const student = await Student.findById(req.user.id);
     
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
     
-    // Return progress updates in reverse chronological order (newest first)
     const updates = student.progressUpdates || [];
     updates.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     
@@ -1464,15 +1411,13 @@ app.get("/api/progress-updates", authenticateToken, async (req, res) => {
 // **📊 Admin: Get All Students' Progress Updates**
 app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
   try {
-    // Verify user is admin
+    await connectToDatabase();
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
     
-    // Find all students
     const students = await Student.find({ role: 'student' });
     
-    // Collect all progress updates
     const allUpdates = [];
     
     students.forEach(student => {
@@ -1492,7 +1437,6 @@ app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
       }
     });
     
-    // Sort by timestamp (newest first)
     allUpdates.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     
     res.json(allUpdates);
@@ -1505,10 +1449,10 @@ app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
 // **📝 Admin: Add Feedback to a Progress Update**
 app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { updateId } = req.params;
     const { feedback } = req.body;
     
-    // Verify user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1517,7 +1461,6 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
       return res.status(400).json({ error: "Feedback content is required" });
     }
     
-    // Find student with this progress update
     const student = await Student.findOne({ 
       "progressUpdates._id": updateId 
     });
@@ -1526,7 +1469,6 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
       return res.status(404).json({ error: "Progress update not found" });
     }
     
-    // Find and update the specific progress update
     const progressUpdateIndex = student.progressUpdates.findIndex(
       update => update._id.toString() === updateId
     );
@@ -1535,7 +1477,6 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
       return res.status(404).json({ error: "Progress update not found" });
     }
     
-    // Update the progress update with feedback
     student.progressUpdates[progressUpdateIndex].feedback = feedback;
     student.progressUpdates[progressUpdateIndex].hasAdminFeedback = true;
     student.progressUpdates[progressUpdateIndex].feedbackDate = new Date();
@@ -1555,10 +1496,10 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
 // Admin: Add Feedback to a Project
 app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (req, res) => {
   try {
+    await connectToDatabase();
     const { projectId } = req.params;
     const { feedback, studentId } = req.body;
     
-    // Verify user is admin
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
@@ -1567,14 +1508,12 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
       return res.status(400).json({ error: "Feedback content is required" });
     }
     
-    // Find the project
     const project = await Project.findById(projectId);
     
     if (!project) {
       return res.status(404).json({ error: "Project not found" });
     }
     
-    // Add feedback to project
     if (!project.feedback) {
       project.feedback = [];
     }
@@ -1583,24 +1522,20 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
       content: feedback,
       date: new Date(),
       adminId: req.user.id,
-      studentId: studentId // Target specific student if provided
+      studentId: studentId
     });
     
-    // Update project
     await project.save();
     
-    // If studentId is provided, also add notification to that student
     if (studentId) {
       const student = await Student.findById(studentId);
       
       if (student) {
-        // Add feedback to the student's project record
         const studentProjectIndex = student.assignedProjects.findIndex(
           p => p._id.toString() === projectId || p.toString() === projectId
         );
         
         if (studentProjectIndex !== -1) {
-          // If assignedProjects contains full project objects
           if (typeof student.assignedProjects[studentProjectIndex] === 'object') {
             if (!student.assignedProjects[studentProjectIndex].feedback) {
               student.assignedProjects[studentProjectIndex].feedback = [];
@@ -1612,8 +1547,6 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
               adminId: req.user.id
             });
           } else {
-            // If assignedProjects contains only IDs, we need a different approach
-            // Create a new field for project feedback if it doesn't exist
             if (!student.projectFeedback) {
               student.projectFeedback = [];
             }
@@ -1628,7 +1561,6 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
           }
         }
         
-        // Add notification
         if (!student.notifications) {
           student.notifications = [];
         }
@@ -1656,14 +1588,10 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
 });
 
 app.get('/api/verify-token', authenticateToken, (req, res) => {
-  // If middleware passes, token is valid
-  // Return user data from the token
   res.json({ 
-      valid: true,
-      user: req.user 
+    valid: true,
+    user: req.user 
   });
 });
-
-
 
 module.exports = app;
