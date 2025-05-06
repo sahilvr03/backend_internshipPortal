@@ -691,8 +691,10 @@ app.get("/api/interns", async (req, res) => {
 });
 
 app.post("/api/interns", async (req, res) => {
+  console.log("Starting /api/interns request with body:", req.body);
   try {
     await connectToDatabase();
+    console.log("Database connection established");
     const { name, email, studentId, duration, username, password, tasks } = req.body;
 
     // Validate required fields
@@ -716,39 +718,33 @@ app.post("/api/interns", async (req, res) => {
       } else if (Array.isArray(tasks)) {
         tasksArray = tasks;
       }
-
       newIntern.tasks = tasksArray;
+      console.log("Tasks array processed:", tasksArray);
     }
 
     if (username && password) {
       const existingUser = await Student.findOne({ username });
+      console.log("Checked for existing user with username:", username);
       if (existingUser && (!studentId || existingUser._id.toString() !== studentId)) {
         return res.status(400).json({ error: "Username already exists" });
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
+      console.log("Password hashed");
 
       if (studentId) {
-        await Student.findByIdAndUpdate(studentId, {
-          username,
-          password: hashedPassword
-        });
+        await Student.findByIdAndUpdate(studentId, { username, password: hashedPassword });
         studentAccount = await Student.findById(studentId);
+        console.log("Updated existing student account:", studentId);
       } else {
-        const newStudent = new Student({
-          name,
-          email,
-          username,
-          password: hashedPassword
-        });
-
+        const newStudent = new Student({ name, email, username, password: hashedPassword });
         studentAccount = await newStudent.save();
         newIntern.student = studentAccount._id;
+        console.log("Created new student account:", studentAccount._id);
       }
 
       if (studentAccount && tasksArray.length > 0) {
         const projectIds = [];
-
         for (const taskName of tasksArray) {
           const project = new Project({
             title: taskName,
@@ -757,35 +753,33 @@ app.post("/api/interns", async (req, res) => {
             assignedTo: [studentAccount._id],
             createdBy: 'admin'
           });
-
           const savedProject = await project.save();
           projectIds.push(savedProject._id);
+          console.log("Saved project:", savedProject._id);
         }
 
         if (projectIds.length > 0) {
           await Student.findByIdAndUpdate(studentAccount._id, {
             $push: { assignedProjects: { $each: projectIds } }
           });
+          console.log("Updated student with project IDs:", projectIds);
         }
       }
     }
 
     await newIntern.save();
+    console.log("Intern saved:", newIntern._id);
 
     res.status(201).json({
       message: "Intern added successfully!",
       intern: newIntern,
-      studentAccount: studentAccount ? {
-        id: studentAccount._id,
-        username: studentAccount.username
-      } : null
+      studentAccount: studentAccount ? { id: studentAccount._id, username: studentAccount.username } : null
     });
   } catch (error) {
     console.error("Error adding intern:", error);
     res.status(500).json({ error: "Error adding intern: " + error.message });
   }
 });
-
 // Update Intern endpoint
 app.put("/api/interns/:id", async (req, res) => {
   try {
