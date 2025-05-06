@@ -34,7 +34,7 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-mongoose.connect("mongodb+srv://sahilvr03:Vijay9271@cluster0.wzcvn7n.mongodb.net")
+mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch((err) => {
     console.error("❌ MongoDB Connection Error:", err);
