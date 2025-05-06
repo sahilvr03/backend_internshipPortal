@@ -34,8 +34,16 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 10000,
+  bufferCommands: false
+})
+  .then(() => console.log("✅ MongoDB Connected"), {
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 10000,
+        bufferCommands: false
+      })
   .catch((err) => {
     console.error("❌ MongoDB Connection Error:", err);
     process.exit(1); // Exit on database connection failure
