@@ -34,20 +34,28 @@ const authenticateToken = (req, res, next) => {
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
 // ✅ **MongoDB Connection with Better Error Handling**
-mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 10000,
-  bufferCommands: false
-})
-  .then(() => console.log("✅ MongoDB Connected"), {
+let conn = null;
+const connectToDatabase = async () => {
+  if (conn == null) {
+    console.log('Creating new MongoDB connection...');
+    try {
+      conn = mongoose.connect(process.env.MONGODB_URI, {
         serverSelectionTimeoutMS: 5000,
         connectTimeoutMS: 10000,
         bufferCommands: false
-      })
-  .catch((err) => {
-    console.error("❌ MongoDB Connection Error:", err);
-    process.exit(1); // Exit on database connection failure
-  });
+      });
+      await conn;
+      console.log('✅ MongoDB Connected');
+    } catch (err) {
+      console.error('❌ MongoDB Connection Error:', err);
+      throw err;
+    }
+  }
+  return conn;
+};
+
+// Pre-warm connection
+connectToDatabase().catch(err => console.error('Initial connection failed:', err));
 
 // ✅ **Enhanced Schema Definitions**
 const mediaSchema = new mongoose.Schema({
