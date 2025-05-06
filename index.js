@@ -234,12 +234,13 @@ app.post("/api/admin/students", async (req, res) => {
 });
 
 // **📋 Get All Students**
+// **📋 Get All Students**
 app.get("/api/admin/students", async (req, res) => {
   try {
+    await connectToDatabase(); // Ensure connection is ready
     const students = await Student.find()
-      .select('-password') // Exclude password field
+      .select('-password')
       .populate('assignedProjects');
-      
     res.json(students);
   } catch (error) {
     console.error("Error fetching students:", error);
