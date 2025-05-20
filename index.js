@@ -315,17 +315,59 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { title, description, assignedTo, tasks, endDate } = req.body;
-    
+
+    // Validate inputs
+    if (!title || !description) {
+      return res.status(400).json({ error: "Title and description are required" });
+    }
+
+    // Validate assignedTo
+    if (assignedTo && !Array.isArray(assignedTo)) {
+      return res.status(400).json({ error: "assignedTo must be an array" });
+    }
+
+    if (assignedTo && assignedTo.length > 0) {
+      // Log assignedTo for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log('assignedTo:', assignedTo);
+      }
+
+      // Ensure all assignedTo values are integers and correspond to existing students
+      const invalidIds = assignedTo.filter(id => !Number.isInteger(Number(id)));
+      if (invalidIds.length > 0) {
+        return res.status(400).json({ 
+          error: "assignedTo contains invalid student IDs",
+          invalidIds 
+        });
+      }
+
+      // Verify students exist
+      const students = await Student.findAll({
+        where: { id: assignedTo }
+      });
+      if (students.length !== assignedTo.length) {
+        const foundIds = students.map(s => s.id);
+        const missingIds = assignedTo.filter(id => !foundIds.includes(id));
+        return res.status(400).json({ 
+          error: "Some student IDs do not exist",
+          missingIds 
+        });
+      }
+    }
+
+    // Create project
     const newProject = await Project.create({
       title,
       description,
       endDate: endDate ? new Date(endDate) : null,
     });
     
+    // Assign students
     if (assignedTo && assignedTo.length > 0) {
       await newProject.setStudents(assignedTo);
     }
     
+    // Create tasks
     if (tasks && tasks.length > 0) {
       const taskRecords = tasks.map(task => ({
         description: task.description,
@@ -342,10 +384,12 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating project:", error);
-    res.status(500).json({ error: "Error creating project" });
+    res.status(500).json({ 
+      error: "Error creating project",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
-
 app.get("/api/admin/projects", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1461,6 +1505,7 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
 
 app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (req, res) => {
   try {
+
     await connectToDatabase();
     const { projectId } = req.params;
     const { feedback, studentId } = req.body;
