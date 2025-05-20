@@ -65,30 +65,36 @@ const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
 });
 
 // Neon PostgreSQL Connection with Retry Logic
+let isConnected = false;
 const connectToDatabase = async () => {
-  return retry(
-    async () => {
-      console.time('DatabaseConnection');
-      try {
-        await sequelize.authenticate();
-        console.log('✅ Neon PostgreSQL Connected');
-        await sequelize.sync();
-      } catch (err) {
-        console.error('❌ Neon PostgreSQL Connection Error:', err);
-        throw err;
-      } finally {
-        console.timeEnd('DatabaseConnection');
+  if (!isConnected) {
+    console.log('Creating new PostgreSQL connection...');
+    return retry(
+      async () => {
+        console.time('DatabaseConnection');
+        try {
+          await sequelize.authenticate();
+          console.log('✅ Neon PostgreSQL Connected');
+          await sequelize.sync();
+          isConnected = true;
+        } catch (err) {
+          console.error('❌ Neon PostgreSQL Connection Error:', err);
+          throw err;
+        } finally {
+          console.timeEnd('DatabaseConnection');
+        }
+        return sequelize;
+      },
+      {
+        retries: 3,
+        factor: 2,
+        minTimeout: 1000,
+        maxTimeout: 5000,
+        onRetry: (err) => console.log('Retrying connection due to:', err.message)
       }
-      return sequelize;
-    },
-    {
-      retries: 3,
-      factor: 2,
-      minTimeout: 1000,
-      maxTimeout: 5000,
-      onRetry: (err) => console.log('Retrying connection due to:', err.message)
-    }
-  );
+    );
+  }
+  return sequelize;
 };
 
 // Pre-warm connection
@@ -259,9 +265,9 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Routes
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
+// Enhanced Admin APIs
 app.post("/api/admin/students", async (req, res) => {
   try {
     await connectToDatabase();
@@ -332,41 +338,7 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { title, description, assignedTo, tasks, endDate } = req.body;
-
-    if (!title || !description) {
-      return res.status(400).json({ error: "Title and description are required" });
-    }
-
-    if (assignedTo && !Array.isArray(assignedTo)) {
-      return res.status(400).json({ error: "assignedTo must be an array" });
-    }
-
-    if (assignedTo && assignedTo.length > 0) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('assignedTo:', assignedTo);
-      }
-
-      const invalidIds = assignedTo.filter(id => !Number.isInteger(Number(id)));
-      if (invalidIds.length > 0) {
-        return res.status(400).json({ 
-          error: "assignedTo contains invalid student IDs",
-          invalidIds 
-        });
-      }
-
-      const students = await Student.findAll({
-        where: { id: assignedTo }
-      });
-      if (students.length !== assignedTo.length) {
-        const foundIds = students.map(s => s.id);
-        const missingIds = assignedTo.filter(id => !foundIds.includes(id));
-        return res.status(400).json({ 
-          error: "Some student IDs do not exist",
-          missingIds 
-        });
-      }
-    }
-
+    
     const newProject = await Project.create({
       title,
       description,
@@ -393,10 +365,7 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating project:", error);
-    res.status(500).json({ 
-      error: "Error creating project",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    res.status(500).json({ error: "Error creating project" });
   }
 });
 
@@ -511,55 +480,38 @@ app.post("/api/student/login", async (req, res) => {
   try {
     await connectToDatabase();
     const { username, email, password } = req.body;
-
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Login request body:', { username, email, password });
-    }
-
+    
     if (!password) {
       return res.status(400).json({ error: "Password is required" });
     }
-
+    
     if (!username && !email) {
       return res.status(400).json({ error: "Username or email is required" });
     }
-
-    const whereConditions = [];
-    if (username && typeof username === 'string' && username.trim()) {
-      whereConditions.push({ username: username.trim() });
-    }
-    if (email && typeof email === 'string' && email.trim()) {
-      whereConditions.push({ email: email.trim() });
-    }
-
-    if (whereConditions.length === 0) {
-      return res.status(400).json({ error: "Valid username or email is required" });
-    }
-
+    
     const student = await Student.findOne({
-      where: {
-        [Op.or]: whereConditions
-      }
+      where: { [Op.or]: [{ username }, { email }] }
     });
-
+    
     if (!student) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-
+    
     const isMatch = await bcrypt.compare(password, student.password);
+    
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-
+    
     const token = jwt.sign(
       { id: student.id, role: student.role || 'student' },
       "secret_key",
       { expiresIn: "1d" }
     );
-
+    
     student.lastActive = new Date();
     await student.save();
-
+    
     res.json({
       token,
       studentId: student.id,
@@ -813,13 +765,6 @@ app.post("/api/interns", async (req, res) => {
       return res.status(400).json({ error: "Name and email are required" });
     }
 
-    if (studentId) {
-      const student = await Student.findByPk(studentId);
-      if (!student) {
-        return res.status(400).json({ error: "Invalid studentId: Student not found" });
-      }
-    }
-
     const newIntern = await Intern.create({
       name,
       email,
@@ -1045,11 +990,8 @@ app.post("/api/interns/:id/attendance", validateIdParam, async (req, res) => {
       attendance
     });
   } catch (error) {
-    console.error(`Error recording attendance for intern ${req.params.id}:`, error);
-    res.status(500).json({ 
-      error: "Error recording attendance",
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    console.error("Error recording attendance:", error);
+    res.status(500).json({ error: "Error recording attendance" });
   }
 });
 
@@ -1597,7 +1539,7 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// Global Error Handler
+// Error Handling Middleware
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
   
