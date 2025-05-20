@@ -30,10 +30,11 @@ const validateIdParam = (req, res, next) => {
     if (req.params[param]) {
       const value = req.params[param];
       if (!value || value === 'undefined' || isNaN(parseInt(value))) {
+        console.error(`Invalid ${param}: ${value} for route ${req.path} from ${req.ip}`);
         return res.status(400).json({ error: `Invalid or missing ${param} parameter` });
       }
       req.params[param] = parseInt(value); // Convert to integer
-      console.log(`Validated ${param}: ${req.params[param]} for ${req.path}`);
+      console.log(`Validated ${param}: ${req.params[param]} for ${req.path} from ${req.ip}`);
     }
   }
   next();
@@ -1044,8 +1045,11 @@ app.post("/api/interns/:id/attendance", validateIdParam, async (req, res) => {
       attendance
     });
   } catch (error) {
-    console.error("Error recording attendance:", error);
-    res.status(500).json({ error: "Error recording attendance" });
+    console.error(`Error recording attendance for intern ${req.params.id}:`, error);
+    res.status(500).json({ 
+      error: "Error recording attendance",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
