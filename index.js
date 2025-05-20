@@ -6,6 +6,15 @@ const jwt = require("jsonwebtoken");
 const retry = require("async-retry");
 require('dotenv').config();
 
+// Verify pg is installed
+try {
+  require('pg');
+  console.log('✅ pg package is installed');
+} catch (error) {
+  console.error('❌ pg package is missing:', error.message);
+  process.exit(1);
+}
+
 const app = express();
 app.use(express.json());
 app.use(cors({
@@ -14,9 +23,15 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// ✅ **Sequelize Setup**
+// ✅ Sequelize Setup
+if (!process.env.NEON_DATABASE_URL) {
+  console.error('❌ NEON_DATABASE_URL environment variable is not set');
+  process.exit(1);
+}
+
 const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
   dialect: 'postgres',
+  dialectModule: require('pg'), // Explicitly specify pg module
   dialectOptions: {
     ssl: {
       require: true,
@@ -32,7 +47,7 @@ const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
   }
 });
 
-// ✅ **Neon PostgreSQL Connection with Retry Logic**
+// ✅ Neon PostgreSQL Connection with Retry Logic
 const connectToDatabase = async () => {
   return retry(
     async () => {
@@ -62,9 +77,7 @@ const connectToDatabase = async () => {
 // Pre-warm connection
 connectToDatabase().catch(err => console.error('Initial connection failed:', err));
 
-// ✅ **Schema Definitions (Sequelize Models)**
-
-// Media Schema
+// ✅ Schema Definitions (Sequelize Models)
 const Media = sequelize.define('Media', {
   fileName: { type: DataTypes.STRING },
   fileType: { type: DataTypes.STRING },
@@ -72,21 +85,18 @@ const Media = sequelize.define('Media', {
   uploadDate: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, { timestamps: false });
 
-// Project Task Schema
 const ProjectTask = sequelize.define('ProjectTask', {
   description: { type: DataTypes.STRING },
   isComplete: { type: DataTypes.BOOLEAN, defaultValue: false },
   dueDate: { type: DataTypes.DATE }
 }, { timestamps: false });
 
-// Project Feedback Schema
 const ProjectFeedback = sequelize.define('ProjectFeedback', {
   comment: { type: DataTypes.STRING },
   date: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   from: { type: DataTypes.STRING }
 }, { timestamps: false });
 
-// Project Schema
 const Project = sequelize.define('Project', {
   title: { type: DataTypes.STRING, allowNull: false },
   description: { type: DataTypes.STRING, allowNull: false },
@@ -100,7 +110,6 @@ const Project = sequelize.define('Project', {
   lastModified: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, { timestamps: false });
 
-// Attendance Schema
 const Attendance = sequelize.define('Attendance', {
   date: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
   status: {
@@ -112,7 +121,6 @@ const Attendance = sequelize.define('Attendance', {
   notes: { type: DataTypes.STRING }
 }, { timestamps: false });
 
-// Progress Update Schema
 const ProgressUpdate = sequelize.define('ProgressUpdate', {
   content: { type: DataTypes.STRING, allowNull: false },
   timestamp: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
@@ -121,7 +129,6 @@ const ProgressUpdate = sequelize.define('ProgressUpdate', {
   feedbackDate: { type: DataTypes.DATE }
 }, { timestamps: false });
 
-// Student Schema
 const Student = sequelize.define('Student', {
   name: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false, unique: true },
@@ -158,7 +165,6 @@ const Student = sequelize.define('Student', {
   }
 }, { timestamps: false });
 
-// Intern Schema
 const Intern = sequelize.define('Intern', {
   name: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false },
@@ -172,7 +178,6 @@ const Intern = sequelize.define('Intern', {
   status: { type: DataTypes.STRING, defaultValue: 'Active' }
 }, { timestamps: false });
 
-// Past Intern Schema
 const PastIntern = sequelize.define('PastIntern', {
   name: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false },
@@ -219,7 +224,7 @@ ProgressUpdate.belongsTo(Intern, { foreignKey: 'internId' });
 Intern.belongsTo(Student, { foreignKey: 'studentId' });
 PastIntern.belongsTo(Student, { foreignKey: 'studentId' });
 
-// ✅ **Middleware for Authentication**
+// Middleware for Authentication
 const authenticateToken = (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -237,11 +242,9 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// Routes (same as before, included for completeness)
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
-// ✅ **Enhanced Admin APIs**
-
-// **🔐 Add Student with Login Credentials**
 app.post("/api/admin/students", async (req, res) => {
   try {
     await connectToDatabase();
@@ -276,7 +279,6 @@ app.post("/api/admin/students", async (req, res) => {
   }
 });
 
-// **📋 Get All Students**
 app.get("/api/admin/students", async (req, res) => {
   try {
     await connectToDatabase();
@@ -292,7 +294,6 @@ app.get("/api/admin/students", async (req, res) => {
   }
 });
 
-// **📋 Get Single Student**
 app.get("/api/admin/students/:id", async (req, res) => {
   try {
     await connectToDatabase();
@@ -301,7 +302,7 @@ app.get("/api/admin/students/:id", async (req, res) => {
       include: [{ model: Project, through: { attributes: [] } }]
     });
     
-    if (!student) return res.status(404).json({ error: " Student not found" });
+    if (!student) return res.status(404).json({ error: "Student not found" });
     
     res.json(student);
   } catch (error) {
@@ -310,7 +311,6 @@ app.get("/api/admin/students/:id", async (req, res) => {
   }
 });
 
-// Create a new project
 app.post("/api/admin/projects", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -346,7 +346,6 @@ app.post("/api/admin/projects", authenticateToken, async (req, res) => {
   }
 });
 
-// **📋 Get All Projects**
 app.get("/api/admin/projects", async (req, res) => {
   try {
     await connectToDatabase();
@@ -361,7 +360,6 @@ app.get("/api/admin/projects", async (req, res) => {
   }
 });
 
-// Get Single Project Details
 app.get("/api/admin/projects/:id", async (req, res) => {
   try {
     await connectToDatabase();
@@ -383,7 +381,6 @@ app.get("/api/admin/projects/:id", async (req, res) => {
   }
 });
 
-// **📋 Update Project Status**
 app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -429,7 +426,6 @@ app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// **📋 Record Student Attendance**
 app.post("/api/admin/attendance/:studentId", async (req, res) => {
   try {
     await connectToDatabase();
@@ -457,7 +453,6 @@ app.post("/api/admin/attendance/:studentId", async (req, res) => {
   }
 });
 
-// **🔐 Student Login**
 app.post("/api/student/login", async (req, res) => {
   try {
     await connectToDatabase();
@@ -506,7 +501,6 @@ app.post("/api/student/login", async (req, res) => {
   }
 });
 
-// **👤 Get Student Profile & Assigned Projects**
 app.get("/api/student/profile/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -530,7 +524,6 @@ app.get("/api/student/profile/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// **👤 Get Student's Project Details**
 app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -557,7 +550,6 @@ app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) 
   }
 });
 
-// **📤 Submit Project Update**
 app.post("/api/student/progress/:projectId", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -583,7 +575,7 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
     });
     
     const project = await Project.findByPk(projectId);
-    if (project &&项目.status === "Not Started") {
+    if (project && project.status === "Not Started") {
       project.status = "In Progress";
       project.lastModified = new Date();
       await project.save();
@@ -607,7 +599,6 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
   }
 });
 
-// **👤 Update Student Profile**
 app.put("/api/student/profile", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -640,7 +631,6 @@ app.put("/api/student/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// **📌 Get Past Interns**
 app.get("/api/interns/past", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -672,7 +662,6 @@ app.get("/api/interns/past", authenticateToken, async (req, res) => {
   }
 });
 
-// **📌 Get Single Intern Details**
 app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -714,7 +703,6 @@ app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// **📌 Get All Interns**
 app.get("/api/interns", async (req, res) => {
   try {
     await connectToDatabase();
@@ -744,7 +732,6 @@ app.get("/api/interns", async (req, res) => {
   }
 });
 
-// **📌 Add New Intern**
 app.post("/api/interns", async (req, res) => {
   console.log("Starting /api/interns request with body:", req.body);
   try {
@@ -826,7 +813,6 @@ app.post("/api/interns", async (req, res) => {
   }
 });
 
-// Update Intern endpoint
 app.put("/api/interns/:id", async (req, res) => {
   try {
     await connectToDatabase();
@@ -888,7 +874,6 @@ app.put("/api/interns/:id", async (req, res) => {
   }
 });
 
-// **📌 Update Intern Progress**
 app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -933,7 +918,6 @@ app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
   }
 });
 
-// Delete project
 app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -942,7 +926,7 @@ app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
       return res.status(404).json({ error: "Project not found" });
     }
     
-    await StudentProjects.destroy({ where: { projectId: project.id } });
+    await sequelize.model('StudentProjects').destroy({ where: { projectId: project.id } });
     await Media.destroy({ where: { projectId: project.id } });
     await ProjectTask.destroy({ where: { projectId: project.id } });
     await ProjectFeedback.destroy({ where: { projectId: project.id } });
@@ -959,7 +943,6 @@ app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// **📌 Mark Intern Attendance**
 app.post("/api/interns/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
@@ -989,7 +972,6 @@ app.post("/api/interns/:id/attendance", async (req, res) => {
   }
 });
 
-// **📌 Delete an Intern (Move to Past Interns)**
 app.delete("/api/interns/:id", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1015,7 +997,7 @@ app.delete("/api/interns/:id", async (req, res) => {
         }));
         
         await Project.destroy({ where: { id: student.Projects.map(p => p.id) } });
-        await StudentProjects.destroy({ where: { studentId } });
+        await sequelize.model('StudentProjects').destroy({ where: { studentId } });
       }
     }
     
@@ -1037,7 +1019,6 @@ app.delete("/api/interns/:id", async (req, res) => {
   }
 });
 
-// Add endpoint to update intern credentials
 app.put("/api/interns/:id/credentials", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1079,7 +1060,6 @@ app.put("/api/interns/:id/credentials", async (req, res) => {
   }
 });
 
-// Add endpoint to get student credentials (for admin only)
 app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1100,7 +1080,6 @@ app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
   }
 });
 
-// **📌 Mark attendance**
 app.post("/api/admin/student/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1128,7 +1107,6 @@ app.post("/api/admin/student/:id/attendance", async (req, res) => {
   }
 });
 
-// **📌 Get all attendance records for a student**
 app.get("/api/admin/student/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
@@ -1144,7 +1122,6 @@ app.get("/api/admin/student/:id/attendance", async (req, res) => {
   }
 });
 
-// **🔧 Get Admin Profile and Settings**
 app.get("/api/admin/profile", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1181,7 +1158,6 @@ app.get("/api/admin/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// **🔧 Update Admin Profile**
 app.put("/api/admin/profile", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1231,7 +1207,6 @@ app.put("/api/admin/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// **🔧 Update Admin Password**
 app.put("/api/admin/password", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1269,7 +1244,6 @@ app.put("/api/admin/password", authenticateToken, async (req, res) => {
   }
 });
 
-// **🔧 Update Notification Settings**
 app.put("/api/admin/settings/notifications", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1304,7 +1278,6 @@ app.put("/api/admin/settings/notifications", authenticateToken, async (req, res)
   }
 });
 
-// **🔧 Update Security Settings**
 app.put("/api/admin/settings/security", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1338,7 +1311,6 @@ app.put("/api/admin/settings/security", authenticateToken, async (req, res) => {
   }
 });
 
-// **📊 Student: Submit Progress Update**
 app.post("/api/progress-updates", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1375,7 +1347,6 @@ app.post("/api/progress-updates", authenticateToken, async (req, res) => {
   }
 });
 
-// **📋 Student: Get All Progress Updates**
 app.get("/api/progress-updates", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1397,7 +1368,6 @@ app.get("/api/progress-updates", authenticateToken, async (req, res) => {
   }
 });
 
-// **📊 Admin: Get All Students' Progress Updates**
 app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1432,7 +1402,6 @@ app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
   }
 });
 
-// **📝 Admin: Add Feedback to a Progress Update**
 app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1469,7 +1438,6 @@ app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, as
   }
 });
 
-// Admin: Add Feedback to a Project
 app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
@@ -1493,8 +1461,7 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
     const projectFeedback = await ProjectFeedback.create({
       comment: feedback,
       date: new Date(),
-      adminId: req.user.id,
-      studentId,
+      from: 'admin',
       projectId
     });
     
@@ -1523,7 +1490,6 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
   });
 });
 
-// ✅ **Health Endpoint with Environment Validation**
 app.get("/health", async (req, res) => {
   try {
     if (!process.env.NEON_DATABASE_URL) {
@@ -1545,12 +1511,12 @@ app.get("/health", async (req, res) => {
     res.status(500).json({ 
       status: "error", 
       time: new Date().toISOString(),
-      message: "Database connection failed"
+      message: "Database connection failed",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-// ✅ **Error Handling Middleware**
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
   
