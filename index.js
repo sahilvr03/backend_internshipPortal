@@ -23,24 +23,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Middleware to validate ID parameters
-const validateIdParam = (req, res, next) => {
-  const paramNames = ['id', 'studentId', 'projectId', 'updateId'];
-  for (const param of paramNames) {
-    if (req.params[param]) {
-      const value = req.params[param];
-      if (!value || value === 'undefined' || isNaN(parseInt(value))) {
-        console.error(`Invalid ${param}: ${value} for route ${req.path} from ${req.ip}`);
-        return res.status(400).json({ error: `Invalid or missing ${param} parameter` });
-      }
-      req.params[param] = parseInt(value); // Convert to integer
-      console.log(`Validated ${param}: ${req.params[param]} for ${req.path} from ${req.ip}`);
-    }
-  }
-  next();
-};
-
-// Sequelize Setup
+// ✅ Sequelize Setup
 if (!process.env.NEON_DATABASE_URL) {
   console.error('❌ NEON_DATABASE_URL environment variable is not set');
   process.exit(1);
@@ -48,7 +31,7 @@ if (!process.env.NEON_DATABASE_URL) {
 
 const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
   dialect: 'postgres',
-  dialectModule: require('pg'),
+  dialectModule: require('pg'), // Explicitly specify pg module
   dialectOptions: {
     ssl: {
       require: true,
@@ -64,43 +47,37 @@ const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
   }
 });
 
-// Neon PostgreSQL Connection with Retry Logic
-let isConnected = false;
+// ✅ Neon PostgreSQL Connection with Retry Logic
 const connectToDatabase = async () => {
-  if (!isConnected) {
-    console.log('Creating new PostgreSQL connection...');
-    return retry(
-      async () => {
-        console.time('DatabaseConnection');
-        try {
-          await sequelize.authenticate();
-          console.log('✅ Neon PostgreSQL Connected');
-          await sequelize.sync();
-          isConnected = true;
-        } catch (err) {
-          console.error('❌ Neon PostgreSQL Connection Error:', err);
-          throw err;
-        } finally {
-          console.timeEnd('DatabaseConnection');
-        }
-        return sequelize;
-      },
-      {
-        retries: 3,
-        factor: 2,
-        minTimeout: 1000,
-        maxTimeout: 5000,
-        onRetry: (err) => console.log('Retrying connection due to:', err.message)
+  return retry(
+    async () => {
+      console.time('DatabaseConnection');
+      try {
+        await sequelize.authenticate();
+        console.log('✅ Neon PostgreSQL Connected');
+        await sequelize.sync();
+      } catch (err) {
+        console.error('❌ Neon PostgreSQL Connection Error:', err);
+        throw err;
+      } finally {
+        console.timeEnd('DatabaseConnection');
       }
-    );
-  }
-  return sequelize;
+      return sequelize;
+    },
+    {
+      retries: 3,
+      factor: 2,
+      minTimeout: 1000,
+      maxTimeout: 5000,
+      onRetry: (err) => console.log('Retrying connection due to:', err.message)
+    }
+  );
 };
 
 // Pre-warm connection
 connectToDatabase().catch(err => console.error('Initial connection failed:', err));
 
-// Schema Definitions (Sequelize Models)
+// ✅ Schema Definitions (Sequelize Models)
 const Media = sequelize.define('Media', {
   fileName: { type: DataTypes.STRING },
   fileType: { type: DataTypes.STRING },
@@ -265,9 +242,9 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// Routes (same as before, included for completeness)
 app.get('/', (req, res) => res.json({ message: 'API is working' }));
 
-// Enhanced Admin APIs
 app.post("/api/admin/students", async (req, res) => {
   try {
     await connectToDatabase();
@@ -317,7 +294,7 @@ app.get("/api/admin/students", async (req, res) => {
   }
 });
 
-app.get("/api/admin/students/:id", validateIdParam, async (req, res) => {
+app.get("/api/admin/students/:id", async (req, res) => {
   try {
     await connectToDatabase();
     const student = await Student.findByPk(req.params.id, {
@@ -383,7 +360,7 @@ app.get("/api/admin/projects", async (req, res) => {
   }
 });
 
-app.get("/api/admin/projects/:id", validateIdParam, async (req, res) => {
+app.get("/api/admin/projects/:id", async (req, res) => {
   try {
     await connectToDatabase();
     const project = await Project.findByPk(req.params.id, {
@@ -404,7 +381,7 @@ app.get("/api/admin/projects/:id", validateIdParam, async (req, res) => {
   }
 });
 
-app.put("/api/admin/projects/:id", validateIdParam, authenticateToken, async (req, res) => {
+app.put("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { title, description, status, assignedTo, tasks, feedback } = req.body;
@@ -449,7 +426,7 @@ app.put("/api/admin/projects/:id", validateIdParam, authenticateToken, async (re
   }
 });
 
-app.post("/api/admin/attendance/:studentId", validateIdParam, async (req, res) => {
+app.post("/api/admin/attendance/:studentId", async (req, res) => {
   try {
     await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
@@ -480,38 +457,59 @@ app.post("/api/student/login", async (req, res) => {
   try {
     await connectToDatabase();
     const { username, email, password } = req.body;
-    
+
+    // Log request body for debugging (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Login request body:', { username, email, password });
+    }
+
+    // Validate inputs
     if (!password) {
       return res.status(400).json({ error: "Password is required" });
     }
-    
+
     if (!username && !email) {
       return res.status(400).json({ error: "Username or email is required" });
     }
-    
+
+    // Build dynamic WHERE conditions
+    const whereConditions = [];
+    if (username && typeof username === 'string' && username.trim()) {
+      whereConditions.push({ username: username.trim() });
+    }
+    if (email && typeof email === 'string' && email.trim()) {
+      whereConditions.push({ email: email.trim() });
+    }
+
+    if (whereConditions.length === 0) {
+      return res.status(400).json({ error: "Valid username or email is required" });
+    }
+
+    // Query student with dynamic conditions
     const student = await Student.findOne({
-      where: { [Op.or]: [{ username }, { email }] }
+      where: {
+        [Op.or]: whereConditions
+      }
     });
-    
+
     if (!student) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    
+
     const isMatch = await bcrypt.compare(password, student.password);
-    
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    
+
     const token = jwt.sign(
       { id: student.id, role: student.role || 'student' },
       "secret_key",
       { expiresIn: "1d" }
     );
-    
+
     student.lastActive = new Date();
     await student.save();
-    
+
     res.json({
       token,
       studentId: student.id,
@@ -524,7 +522,7 @@ app.post("/api/student/login", async (req, res) => {
   }
 });
 
-app.get("/api/student/profile/:id", validateIdParam, authenticateToken, async (req, res) => {
+app.get("/api/student/profile/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     if (req.user.id !== req.params.id && req.user.role !== 'admin') {
@@ -547,7 +545,7 @@ app.get("/api/student/profile/:id", validateIdParam, authenticateToken, async (r
   }
 });
 
-app.get("/api/student/projects/:projectId", validateIdParam, authenticateToken, async (req, res) => {
+app.get("/api/student/projects/:projectId", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { projectId } = req.params;
@@ -573,7 +571,7 @@ app.get("/api/student/projects/:projectId", validateIdParam, authenticateToken, 
   }
 });
 
-app.post("/api/student/progress/:projectId", validateIdParam, authenticateToken, async (req, res) => {
+app.post("/api/student/progress/:projectId", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { projectId } = req.params;
@@ -685,7 +683,7 @@ app.get("/api/interns/past", authenticateToken, async (req, res) => {
   }
 });
 
-app.get("/api/interns/past/:id", validateIdParam, authenticateToken, async (req, res) => {
+app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const pastIntern = await PastIntern.findByPk(req.params.id, {
@@ -836,7 +834,7 @@ app.post("/api/interns", async (req, res) => {
   }
 });
 
-app.put("/api/interns/:id", validateIdParam, async (req, res) => {
+app.put("/api/interns/:id", async (req, res) => {
   try {
     await connectToDatabase();
     const internId = req.params.id;
@@ -897,7 +895,7 @@ app.put("/api/interns/:id", validateIdParam, async (req, res) => {
   }
 });
 
-app.post("/api/interns/:id/progress", validateIdParam, authenticateToken, async (req, res) => {
+app.post("/api/interns/:id/progress", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { content } = req.body;
@@ -941,7 +939,7 @@ app.post("/api/interns/:id/progress", validateIdParam, authenticateToken, async 
   }
 });
 
-app.delete("/api/admin/projects/:id", validateIdParam, authenticateToken, async (req, res) => {
+app.delete("/api/admin/projects/:id", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const project = await Project.findByPk(req.params.id);
@@ -966,7 +964,7 @@ app.delete("/api/admin/projects/:id", validateIdParam, authenticateToken, async 
   }
 });
 
-app.post("/api/interns/:id/attendance", validateIdParam, async (req, res) => {
+app.post("/api/interns/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
@@ -995,7 +993,7 @@ app.post("/api/interns/:id/attendance", validateIdParam, async (req, res) => {
   }
 });
 
-app.delete("/api/interns/:id", validateIdParam, async (req, res) => {
+app.delete("/api/interns/:id", async (req, res) => {
   try {
     await connectToDatabase();
     const intern = await Intern.findByPk(req.params.id);
@@ -1042,7 +1040,7 @@ app.delete("/api/interns/:id", validateIdParam, async (req, res) => {
   }
 });
 
-app.put("/api/interns/:id/credentials", validateIdParam, async (req, res) => {
+app.put("/api/interns/:id/credentials", async (req, res) => {
   try {
     await connectToDatabase();
     const { username, password } = req.body;
@@ -1083,7 +1081,7 @@ app.put("/api/interns/:id/credentials", validateIdParam, async (req, res) => {
   }
 });
 
-app.get("/api/admin/student-credentials/:studentId", validateIdParam, async (req, res) => {
+app.get("/api/admin/student-credentials/:studentId", async (req, res) => {
   try {
     await connectToDatabase();
     const student = await Student.findByPk(req.params.studentId, {
@@ -1103,7 +1101,7 @@ app.get("/api/admin/student-credentials/:studentId", validateIdParam, async (req
   }
 });
 
-app.post("/api/admin/student/:id/attendance", validateIdParam, async (req, res) => {
+app.post("/api/admin/student/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
     const { date, status, timeIn, timeOut, notes } = req.body;
@@ -1130,7 +1128,7 @@ app.post("/api/admin/student/:id/attendance", validateIdParam, async (req, res) 
   }
 });
 
-app.get("/api/admin/student/:id/attendance", validateIdParam, async (req, res) => {
+app.get("/api/admin/student/:id/attendance", async (req, res) => {
   try {
     await connectToDatabase();
     const student = await Student.findByPk(req.params.id, {
@@ -1425,7 +1423,7 @@ app.get("/api/admin/progress-updates", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/admin/progress-updates/:updateId/feedback", validateIdParam, authenticateToken, async (req, res) => {
+app.post("/api/admin/progress-updates/:updateId/feedback", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { updateId } = req.params;
@@ -1461,7 +1459,7 @@ app.post("/api/admin/progress-updates/:updateId/feedback", validateIdParam, auth
   }
 });
 
-app.post("/api/admin/projects/:projectId/feedback", validateIdParam, authenticateToken, async (req, res) => {
+app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (req, res) => {
   try {
     await connectToDatabase();
     const { projectId } = req.params;
@@ -1481,13 +1479,6 @@ app.post("/api/admin/projects/:projectId/feedback", validateIdParam, authenticat
       return res.status(404).json({ error: "Project not found" });
     }
     
-    if (studentId) {
-      const student = await Student.findByPk(studentId);
-      if (!student) {
-        return res.status(400).json({ error: "Invalid studentId: Student not found" });
-      }
-    }
-    
     const projectFeedback = await ProjectFeedback.create({
       comment: feedback,
       date: new Date(),
@@ -1495,9 +1486,17 @@ app.post("/api/admin/projects/:projectId/feedback", validateIdParam, authenticat
       projectId
     });
     
+    if (studentId) {
+      const student = await Student.findByPk(studentId);
+      
+      if (student) {
+        // Note: Project feedback is stored in ProjectFeedback table
+      }
+    }
+    
     res.json({
       message: "Feedback added successfully",
-      feedback: projectFeedback
+      project
     });
   } catch (error) {
     console.error("Error adding feedback to project:", error);
@@ -1539,17 +1538,8 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// Error Handling Middleware
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
-  
-  if (err.name === 'SequelizeDatabaseError' && err.parent.code === '22P02') {
-    return res.status(400).json({
-      error: "Invalid input syntax for integer",
-      message: "Ensure that all ID parameters are valid integers",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
   
   res.status(500).json({ 
     error: "An unexpected error occurred",
