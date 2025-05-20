@@ -457,38 +457,59 @@ app.post("/api/student/login", async (req, res) => {
   try {
     await connectToDatabase();
     const { username, email, password } = req.body;
-    
+
+    // Log request body for debugging (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Login request body:', { username, email, password });
+    }
+
+    // Validate inputs
     if (!password) {
       return res.status(400).json({ error: "Password is required" });
     }
-    
+
     if (!username && !email) {
       return res.status(400).json({ error: "Username or email is required" });
     }
-    
+
+    // Build dynamic WHERE conditions
+    const whereConditions = [];
+    if (username && typeof username === 'string' && username.trim()) {
+      whereConditions.push({ username: username.trim() });
+    }
+    if (email && typeof email === 'string' && email.trim()) {
+      whereConditions.push({ email: email.trim() });
+    }
+
+    if (whereConditions.length === 0) {
+      return res.status(400).json({ error: "Valid username or email is required" });
+    }
+
+    // Query student with dynamic conditions
     const student = await Student.findOne({
-      where: { [Op.or]: [{ username }, { email }] }
+      where: {
+        [Op.or]: whereConditions
+      }
     });
-    
+
     if (!student) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    
+
     const isMatch = await bcrypt.compare(password, student.password);
-    
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-    
+
     const token = jwt.sign(
       { id: student.id, role: student.role || 'student' },
       "secret_key",
       { expiresIn: "1d" }
     );
-    
+
     student.lastActive = new Date();
     await student.save();
-    
+
     res.json({
       token,
       studentId: student.id,
