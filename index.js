@@ -3,6 +3,7 @@ const { Sequelize, DataTypes, Op } = require("sequelize");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const retry = require("async-retry");
 require('dotenv').config();
 
 const app = express();
@@ -18,28 +19,44 @@ const sequelize = new Sequelize(process.env.NEON_DATABASE_URL, {
   dialect: 'postgres',
   dialectOptions: {
     ssl: {
-      rejectUnauthorized: false // Required for Neon PostgreSQL
+      require: true,
+      rejectUnauthorized: false
     }
   },
-  logging: console.log // Enable logging for debugging
+  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  pool: {
+    max: 2,
+    min: 0,
+    acquire: 30000,
+    idle: 10000
+  }
 });
 
-// ✅ **Neon PostgreSQL Connection with Better Error Handling**
-let isConnected = false;
+// ✅ **Neon PostgreSQL Connection with Retry Logic**
 const connectToDatabase = async () => {
-  if (!isConnected) {
-    console.log('Creating new PostgreSQL connection...');
-    try {
-      await sequelize.authenticate();
-      console.log('✅ Neon PostgreSQL Connected');
-      await sequelize.sync(); // Sync models with database
-      isConnected = true;
-    } catch (err) {
-      console.error('❌ Neon PostgreSQL Connection Error:', err);
-      throw err;
+  return retry(
+    async () => {
+      console.time('DatabaseConnection');
+      try {
+        await sequelize.authenticate();
+        console.log('✅ Neon PostgreSQL Connected');
+        await sequelize.sync();
+      } catch (err) {
+        console.error('❌ Neon PostgreSQL Connection Error:', err);
+        throw err;
+      } finally {
+        console.timeEnd('DatabaseConnection');
+      }
+      return sequelize;
+    },
+    {
+      retries: 3,
+      factor: 2,
+      minTimeout: 1000,
+      maxTimeout: 5000,
+      onRetry: (err) => console.log('Retrying connection due to:', err.message)
     }
-  }
-  return sequelize;
+  );
 };
 
 // Pre-warm connection
@@ -284,7 +301,7 @@ app.get("/api/admin/students/:id", async (req, res) => {
       include: [{ model: Project, through: { attributes: [] } }]
     });
     
-    if (!student) return res.status(404).json({ error: "Student not found" });
+    if (!student) return res.status(404).json({ error: " Student not found" });
     
     res.json(student);
   } catch (error) {
@@ -566,7 +583,7 @@ app.post("/api/student/progress/:projectId", authenticateToken, async (req, res)
     });
     
     const project = await Project.findByPk(projectId);
-    if (project && project.status === "Not Started") {
+    if (project &&项目.status === "Not Started") {
       project.status = "In Progress";
       project.lastModified = new Date();
       await project.save();
@@ -697,7 +714,7 @@ app.get("/api/interns/past/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// **📌 Add New Intern**
+// **📌 Get All Interns**
 app.get("/api/interns", async (req, res) => {
   try {
     await connectToDatabase();
@@ -715,8 +732,8 @@ app.get("/api/interns", async (req, res) => {
       joiningDate: intern.joiningDate,
       tasks: intern.tasks || [],
       university: intern.Student ? intern.Student.university : null,
-      dailyProgress: [], // Handled separately if needed
-      attendance: [], // Handled separately if needed
+      dailyProgress: [],
+      attendance: [],
       student: intern.Student
     }));
     
@@ -727,13 +744,13 @@ app.get("/api/interns", async (req, res) => {
   }
 });
 
+// **📌 Add New Intern**
 app.post("/api/interns", async (req, res) => {
   console.log("Starting /api/interns request with body:", req.body);
   try {
     await connectToDatabase();
     const { name, email, studentId, duration, username, password, tasks } = req.body;
 
-    // Validate required fields
     if (!name || !email) {
       return res.status(400).json({ error: "Name and email are required" });
     }
@@ -1474,7 +1491,7 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
     }
     
     const projectFeedback = await ProjectFeedback.create({
-      content: feedback,
+      comment: feedback,
       date: new Date(),
       adminId: req.user.id,
       studentId,
@@ -1485,9 +1502,7 @@ app.post("/api/admin/projects/:projectId/feedback", authenticateToken, async (re
       const student = await Student.findByPk(studentId);
       
       if (student) {
-        // Note: Project feedback is stored in ProjectFeedback table, not directly in Student
-        // If you want to store notifications, you can add a Notifications table
-        // For simplicity, we'll skip notifications for now as the original schema didn't fully implement them
+        // Note: Project feedback is stored in ProjectFeedback table
       }
     }
     
@@ -1508,6 +1523,33 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
   });
 });
 
+// ✅ **Health Endpoint with Environment Validation**
+app.get("/health", async (req, res) => {
+  try {
+    if (!process.env.NEON_DATABASE_URL) {
+      return res.status(500).json({ 
+        status: "error", 
+        time: new Date().toISOString(),
+        message: "NEON_DATABASE_URL environment variable is not set"
+      });
+    }
+    await connectToDatabase();
+    res.status(200).json({ 
+      status: "ok", 
+      time: new Date().toISOString(),
+      message: "NCAI Portal API is running",
+      databaseUrl: process.env.NEON_DATABASE_URL ? "Set" : "Not set"
+    });
+  } catch (error) {
+    console.error("Health check failed:", error);
+    res.status(500).json({ 
+      status: "error", 
+      time: new Date().toISOString(),
+      message: "Database connection failed"
+    });
+  }
+});
+
 // ✅ **Error Handling Middleware**
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
@@ -1517,19 +1559,5 @@ app.use((err, req, res, next) => {
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
-
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
-    status: "ok", 
-    time: new Date().toISOString(),
-    message: "NCAI Portal API is running"
-  });
-});
-
-// // Start the server
-// const PORT = process.env.PORT || 8000;
-// app.listen(PORT, () => {
-//   console.log(`Server running on port ${PORT}`);
-// });
 
 module.exports = app;
