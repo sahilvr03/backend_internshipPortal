@@ -32,6 +32,16 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
     user: req.user 
   });
 });
+// Starting Route to Check Deployment
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "success",
+    message: "Welcome to the NCAI Portal API",
+    version: "1.0.0",
+    environment: process.env.NODE_ENV || "development",
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Error Handling Middleware
 app.use((err, req, res, next) => {
