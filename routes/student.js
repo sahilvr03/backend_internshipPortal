@@ -66,18 +66,29 @@ router.get("/profile/:id", authenticateToken, async (req, res) => {
     
     const student = await Student.findById(req.params.id)
       .select('-password')
-      .populate('assignedProjects');
+      .populate({
+        path: 'assignedProjects',
+        select: 'title description status tasks feedback startDate endDate lastModified'
+      });
       
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
     
+    console.log(`Fetched profile for student ${req.params.id}:`, {
+      assignedProjects: student.assignedProjects.map(p => ({
+        id: p._id,
+        title: p.title
+      }))
+    });
+    
     res.json(student);
   } catch (error) {
     console.error("Error fetching profile:", error);
-    res.status(500).json({ error: "Error fetching profile" });
+    res.status(500).json({ error: "Error fetching profile: " + error.message });
   }
 });
+
 
 // Get Student's Project Details
 router.get("/projects/:projectId", authenticateToken, async (req, res) => {

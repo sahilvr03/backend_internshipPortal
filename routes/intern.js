@@ -362,6 +362,8 @@ router.delete("/:id", async (req, res) => {
         console.log("Projects deleted successfully");
       }
     }
+
+    
     
     const pastIntern = new PastIntern({
       ...intern.toObject(),
@@ -380,6 +382,54 @@ router.delete("/:id", async (req, res) => {
   } catch (error) {
     console.error("Error deleting intern:", error);
     res.status(500).json({ error: "Error deleting intern" });
+  }
+});
+
+// Get Single Past Intern Details
+router.get("/past/:id", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin only." });
+    }
+
+    const pastIntern = await PastIntern.findById(req.params.id)
+      .populate('student', 'name email username profilePicture');
+
+    if (!pastIntern) {
+      return res.status(404).json({ error: "Past intern not found" });
+    }
+
+    // Format the response to match frontend expectations
+    const formattedIntern = {
+      _id: pastIntern._id,
+      name: pastIntern.student ? pastIntern.student.name : pastIntern.name,
+      email: pastIntern.student ? pastIntern.student.email : pastIntern.email,
+      duration: pastIntern.duration || 3,
+      joiningDate: pastIntern.joiningDate,
+      endDate: pastIntern.endDate || pastIntern.deletedAt,
+      tasks: pastIntern.tasks || [],
+      attendance: pastIntern.attendance || [],
+      progressUpdates: pastIntern.dailyProgress || [],
+      deletedProjects: pastIntern.deletedProjects || [],
+      completionRate: pastIntern.completionRate || 0,
+      student: pastIntern.student,
+      stats: {
+        completedProjects: pastIntern.deletedProjects?.filter(p => p.status === 'Completed').length || 0,
+        totalProjects: pastIntern.deletedProjects?.length || 0,
+        attendance: {
+          present: pastIntern.attendance?.filter(a => a.status === 'Present').length || 0,
+          absent: pastIntern.attendance?.filter(a => a.status === 'Absent').length || 0,
+          late: pastIntern.attendance?.filter(a => a.status === 'Late').length || 0,
+          total: pastIntern.attendance?.length || 0,
+        },
+      },
+    };
+
+    console.log(`Fetched past intern details for ID: ${req.params.id}`);
+    res.json(formattedIntern);
+  } catch (error) {
+    console.error("Error fetching past intern details:", error);
+    res.status(500).json({ error: "Error fetching past intern details: " + error.message });
   }
 });
 

@@ -34,39 +34,71 @@ router.get("/students/:id", async (req, res) => {
     res.status(500).json({ error: "Error fetching student details" });
   }
 });
+// Delete a Project
+router.delete("/projects/:id", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin only." });
+    }
+
+    const project = await Project.findById(req.params.id);
+    if (!project) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    // Remove project reference from assigned students
+    if (project.assignedTo && project.assignedTo.length > 0) {
+      await Student.updateMany(
+        { _id: { $in: project.assignedTo } },
+        { $pull: { assignedProjects: project._id } }
+      );
+    }
+
+    await Project.findByIdAndDelete(req.params.id);
+
+    res.json({
+      message: "Project deleted successfully",
+      projectId: req.params.id,
+    });
+  } catch (error) {
+    console.error("Error deleting project:", error);
+    res.status(500).json({ error: "Error deleting project: " + error.message });
+  }
+});
 
 // Create New Project
 router.post("/projects", async (req, res) => {
   try {
     const { title, description, assignedTo, tasks, endDate } = req.body;
-    
+    if (!title || !description) {
+      return res.status(400).json({ error: "Title and description are required" });
+    }
     const newProject = new Project({
       title,
       description,
-      assignedTo,
+      assignedTo: assignedTo || [],
       endDate: endDate ? new Date(endDate) : undefined,
-      tasks: tasks || []
+      tasks: tasks || [],
     });
-    
     const savedProject = await newProject.save();
-    
     if (assignedTo && assignedTo.length > 0) {
+      // Verify student IDs exist
+      const students = await Student.find({ _id: { $in: assignedTo } });
+      if (students.length !== assignedTo.length) {
+        console.warn('Some assignedTo IDs are invalid:', assignedTo);
+      }
       await Student.updateMany(
         { _id: { $in: assignedTo } },
         { $push: { assignedProjects: savedProject._id } }
       );
+      console.log(`Assigned project ${savedProject._id} to ${assignedTo.length} students`);
     }
-    
-    res.status(201).json({ 
-      message: "Project created successfully!",
-      project: savedProject
-    });
+    res.status(201).json({ message: "Project created successfully!", project: savedProject });
   } catch (error) {
     console.error("Error creating project:", error);
-    res.status(500).json({ error: "Error creating project" });
+    res.status(500).json({ error: "Error creating project: " + error.message });
   }
 });
-
 // Get All Projects
 router.get("/projects", async (req, res) => {
   try {
@@ -128,39 +160,50 @@ router.put("/projects/:id", async (req, res) => {
 });
 
 // Record Student Attendance
-router.post("/attendance/:studentId", async (req, res) => {
+// Record Student Attendance
+router.post("/attendance/:studentId", authenticateToken, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin only." });
+    }
+
     const { date, status, timeIn, timeOut, notes } = req.body;
-    
+
     const student = await Student.findById(req.params.studentId);
     if (!student) return res.status(404).json({ error: "Student not found" });
-    
-    student.attendance.push({
+
+    const attendanceRecord = {
       date: date ? new Date(date) : new Date(),
-      status,
-      timeIn,
-      timeOut,
-      notes
-    });
-    
+      status: status || "Present",
+      timeIn: timeIn || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timeOut: timeOut || null,
+      notes: notes || `Marked by admin: ${req.user.name || 'Admin'}`
+    };
+
+    student.attendance.push(attendanceRecord);
     await student.save();
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
       message: "Attendance recorded successfully!",
-      attendance: student.attendance[student.attendance.length - 1]
+      attendance: attendanceRecord
     });
   } catch (error) {
     console.error("Error recording attendance:", error);
-    res.status(500).json({ error: "Error recording attendance" });
+    res.status(500).json({ error: "Error recording attendance: " + error.message });
   }
 });
 
 // Get all attendance records for a student
-router.get("/student/:id/attendance", async (req, res) => {
+// Get all attendance records for a student
+router.get("/student/:id/attendance", authenticateToken, async (req, res) => {
   try {
+    if (req.user.role !== 'admin' && req.user.id !== req.params.id) {
+      return res.status(403).json({ error: "Access denied. You can only view your own attendance or must be an admin." });
+    }
+
     const student = await Student.findById(req.params.id).select('attendance');
     if (!student) return res.status(404).json({ error: "Student not found" });
-    
+
     res.json(student.attendance);
   } catch (error) {
     console.error("Error fetching attendance records:", error);

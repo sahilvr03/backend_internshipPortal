@@ -34,7 +34,13 @@ const studentSchema = new mongoose.Schema({
   tasks: [{ type: String }],
   bio: String,
   assignedProjects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Project' }],
-  attendance: [attendanceSchema],
+  attendance: [{
+    date: { type: Date, default: Date.now },
+    status: { type: String, enum: ['Present', 'Absent', 'Late'], required: true },
+    timeIn: { type: String },
+    timeOut: { type: String },
+    notes: { type: String }
+  }],
   progressUpdates: [progressUpdateSchema],
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
