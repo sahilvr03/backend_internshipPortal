@@ -128,6 +128,41 @@ router.get("/projects/:id", async (req, res) => {
     res.status(500).json({ error: "Error fetching project details" });
   }
 });
+router.post("/attendance/qr/:studentId", async (req, res) => {
+  try {
+    const { qrToken } = req.body;
+
+    // Validate QR token (e.g., a simple token check; adjust based on your QR code data)
+    if (!qrToken || qrToken !== process.env.QR_ATTENDANCE_TOKEN) {
+      return res.status(400).json({ error: "Invalid QR code token" });
+    }
+
+    const student = await Student.findById(req.params.studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const now = new Date();
+    const attendanceRecord = {
+      date: now,
+      status: "Present",
+      timeIn: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timeOut: null,
+      notes: "Attendance marked via QR code scanner"
+    };
+
+    student.attendance.push(attendanceRecord);
+    await student.save();
+
+    res.status(201).json({
+      message: "Attendance recorded successfully via QR code!",
+      attendance: attendanceRecord
+    });
+  } catch (error) {
+    console.error("Error recording QR attendance:", error);
+    res.status(500).json({ error: "Error recording attendance: " + error.message });
+  }
+});
 
 // Update Project Status
 router.put("/projects/:id", async (req, res) => {
