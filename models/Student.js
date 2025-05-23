@@ -8,7 +8,7 @@ const attendanceSchema = new mongoose.Schema({
     required: true
   },
   timeIn: String,
-  timeOut: String,
+  timeOut: String ,
   notes: String
 });
 
