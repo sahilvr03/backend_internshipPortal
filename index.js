@@ -9,19 +9,33 @@ require("dotenv").config();
 
 const app = express();
 
-
+// Normalize URLs
 app.use((req, res, next) => {
   req.url = req.url.replace(/\/+/g, '/');
   next();
 });
 
+// CORS Configuration
+const allowedOrigins = [
+  'https://scl-internship-portal.vercel.app',
+  '*',
+];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+app.options('*', cors());
+
 // Middleware
 app.use(express.json());
-app.use(cors({
-  origin: '*', 
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 
 // Connect to MongoDB
 connectDB();
@@ -38,6 +52,7 @@ app.get('/api/verify-token', authenticateToken, (req, res) => {
     user: req.user 
   });
 });
+
 // Starting Route to Check Deployment
 app.get("/", (req, res) => {
   res.status(200).json({
@@ -49,31 +64,35 @@ app.get("/", (req, res) => {
   });
 });
 
+// Health Check
+app.get("/health", async (req, res) => {
+  try {
+    const mongoose = require('mongoose');
+    const dbStatus = mongoose.connection.readyState === 1 ? "connected" : "disconnected";
+    res.status(200).json({ 
+      status: "ok", 
+      time: new Date().toISOString(),
+      message: "NCAI Portal API is running",
+      dbStatus: dbStatus
+    });
+  } catch (error) {
+    console.error("Health check error:", error.message);
+    res.status(500).json({ 
+      status: "error", 
+      message: "Health check failed",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 // Error Handling Middleware
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err.stack);
-  
   res.status(500).json({ 
     error: "An unexpected error occurred",
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
-// Health Check
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
-    status: "ok", 
-    time: new Date().toISOString(),
-    message: "NCAI Portal API is running"
-  });
-});
-
-// // Start Server
-const PORT = process.env.PORT || 8000;
-const HOST = process.env.HOST || '192.168.8.116'; // Replace with your desired IP
-
-app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running on ${PORT}`);
-});
 // Export for Vercel serverless
 module.exports = app;
