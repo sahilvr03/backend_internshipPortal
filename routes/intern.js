@@ -6,6 +6,7 @@ const PastIntern = require("../models/PastIntern");
 const Student = require("../models/Student");
 const Project = require("../models/Project");
 const authenticateToken = require("../middleware/auth");
+require("dotenv").config();
 
 // Get all interns (current)
 router.get("/", async (req, res) => {
@@ -432,6 +433,56 @@ router.get("/past/:id", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Error fetching past intern details: " + error.message });
   }
 });
+
+
+// Mark attendance via QR code
+router.post("/:id/attendance/qr", authenticateToken, async (req, res) => {
+  try {
+    const { qrToken } = req.body;
+    const internId = req.params.id;
+
+    if (!qrToken) {
+      return res.status(400).json({ error: "QR token is required" });
+    }
+
+    // Verify the QR token (you might want to add more validation)
+    const isValidToken = verifyQrToken(qrToken); // Implement this function
+
+    if (!isValidToken) {
+      return res.status(400).json({ error: "Invalid QR token" });
+    }
+
+    const intern = await Intern.findById(internId);
+    if (!intern) {
+      return res.status(404).json({ error: "Intern not found" });
+    }
+
+    // Record attendance
+    intern.attendance.push({
+      date: new Date(),
+      status: "Present",
+      timeIn: new Date().toLocaleTimeString(),
+      notes: "Attendance marked via QR code"
+    });
+
+    await intern.save();
+
+    res.json({ 
+      message: "Attendance marked successfully via QR code",
+      attendance: intern.attendance[intern.attendance.length - 1]
+    });
+  } catch (error) {
+    console.error("Error marking attendance via QR:", error);
+    res.status(500).json({ error: "Error marking attendance via QR" });
+  }
+});
+
+// Simple token verification (you should implement proper verification)
+function verifyQrToken(token) {
+  // Implement your token verification logic
+  // This could check against a database of valid tokens or verify a signature
+  return token === process.env.QR_ATTENDANCE_TOKEN;
+}
 
 // Update Intern Credentials
 router.put("/:id/credentials", async (req, res) => {

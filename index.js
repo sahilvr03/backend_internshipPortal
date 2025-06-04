@@ -69,9 +69,11 @@ app.get("/health", (req, res) => {
 });
 
 // // Start Server
-// const PORT = process.env.PORT || 8000;
-// app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+const PORT = process.env.PORT || 8000;
+const HOST = process.env.HOST || '192.168.8.116'; // Replace with your desired IP
 
-
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 Server running on ${PORT}`);
+});
 // Export for Vercel serverless
 module.exports = app;
