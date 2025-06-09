@@ -152,6 +152,26 @@ router.post("/attendance/qr/:studentId", async (req, res) => {
   }
 });
 
+router.get("/interns", authenticateToken, async (req, res) => {
+  try {
+    // Ensure only an admin can access this data
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: "Access denied. Admin only." });
+    }
+
+    // Find all users with the 'student' role.
+    // The `attendance` array is part of the Student model and will be fetched automatically.
+    const interns = await Student.find({ role: 'student' }).select('-password');
+    
+    // Send the complete list of interns with their attendance data
+    res.json(interns);
+
+  } catch (error) {
+    console.error("Error fetching interns data:", error);
+    res.status(500).json({ error: "Error fetching interns data" });
+  }
+});
+
 // New Static QR Code Attendance Endpoint
 router.post("/attendance/mark", authenticateToken, async (req, res) => {
   try {
