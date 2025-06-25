@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const Student = require("../models/Student");
 const Project = require("../models/Project");
+const PendingStudent = require("../models/PendingStudent");
 const authenticateToken = require("../middleware/auth");
 
 // Get All Students
@@ -152,20 +153,14 @@ router.post("/attendance/qr/:studentId", async (req, res) => {
   }
 });
 
+// Get all interns
 router.get("/interns", authenticateToken, async (req, res) => {
   try {
-    // Ensure only an admin can access this data
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: "Access denied. Admin only." });
     }
-
-    // Find all users with the 'student' role.
-    // The `attendance` array is part of the Student model and will be fetched automatically.
     const interns = await Student.find({ role: 'student' }).select('-password');
-    
-    // Send the complete list of interns with their attendance data
     res.json(interns);
-
   } catch (error) {
     console.error("Error fetching interns data:", error);
     res.status(500).json({ error: "Error fetching interns data" });
@@ -606,4 +601,74 @@ router.get("/student-credentials/:studentId", async (req, res) => {
   }
 });
 
+// Get All Pending Students
+// Get All Pending Students
+router.get("/pending-students", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+        const pendingStudents = await PendingStudent.find().select('-password');
+        res.json(pendingStudents);
+    } catch (error) {
+        console.error("Error fetching pending students:", error);
+        res.status(500).json({ error: "Error fetching pending students" });
+    }
+});
+// Accept Pending Student
+// Accept Pending Student
+router.post("/pending-students/:id/accept", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+        const pendingStudent = await PendingStudent.findById(req.params.id);
+        if (!pendingStudent) {
+            return res.status(404).json({ error: "Pending student not found" });
+        }
+        // Create a new Student document from the pending student data
+        const newStudent = new Student({
+            name: pendingStudent.name,
+            email: pendingStudent.email,
+            username: pendingStudent.username,
+            password: pendingStudent.password, // Hashed password is carried over
+            contactNumber: pendingStudent.contactNumber,
+            program: pendingStudent.program,
+            university: pendingStudent.university,
+            graduationYear: pendingStudent.graduationYear,
+            bio: pendingStudent.bio,
+            notificationSettings: pendingStudent.notificationSettings,
+            securitySettings: pendingStudent.securitySettings,
+            role: 'student', // Assign the student role
+            joinDate: new Date(), // Set join date upon approval
+        });
+        await newStudent.save(); // Save to the active students collection
+
+        await PendingStudent.findByIdAndDelete(req.params.id); // Delete from pending
+
+        res.json({ message: "Student approved and moved to active students", studentId: newStudent._id });
+    } catch (error) {
+        console.error("Error accepting pending student:", error);
+        res.status(500).json({ error: "Error accepting pending student: " + error.message });
+    }
+});
+
+// Reject Pending Student
+// Reject Pending Student
+router.post("/pending-students/:id/reject", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+        const pendingStudent = await PendingStudent.findById(req.params.id);
+        if (!pendingStudent) {
+            return res.status(404).json({ error: "Pending student not found" });
+        }
+        await PendingStudent.findByIdAndDelete(req.params.id); // Delete the request
+        res.json({ message: "Student registration request rejected" });
+    } catch (error) {
+        console.error("Error rejecting pending student:", error);
+        res.status(500).json({ error: "Error rejecting pending student: " + error.message });
+    }
+});
 module.exports = router;
