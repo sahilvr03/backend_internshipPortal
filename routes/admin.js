@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const Student = require("../models/Student");
 const Project = require("../models/Project");
-const PendingStudent = require("../models/PendingStudent");
+const PendingStudent = require("../models/pendingStudents");
 const authenticateToken = require("../middleware/auth");
 
 // Get All Students

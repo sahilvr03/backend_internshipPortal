@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const Student = require("../models/Student");
-const PendingStudent = require("../models/PendingStudent"); // Ensure this path is correct
+const PendingStudent = require("../models/pendingStudents"); // Ensure this path is correct
 const Project = require("../models/Project");
 const authenticateToken = require("../middleware/auth");
 require("dotenv").config(); // Ensure dotenv is loaded for JWT_SECRET
