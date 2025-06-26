@@ -15,6 +15,9 @@ app.use((req, res, next) => {
   next();
 });
 
+
+
+
 app.use(cors()); // allow all origins
 
 app.options('*', cors());

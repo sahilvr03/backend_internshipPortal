@@ -8,7 +8,7 @@ const attendanceSchema = new mongoose.Schema({
     required: true
   },
   timeIn: String,
-  timeOut: String ,
+  timeOut: String,
   notes: String
 });
 
@@ -27,20 +27,21 @@ const studentSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, default: 'student' },
   joinDate: { type: Date, default: Date.now },
-  contactNumber: String,
-  program: String,
-  university: String,
-  graduationYear: Number,
+  contactNumber: { type: String },
+  program: { type: String },
+  university: { type: String },
+  department: { type: String, default: "N/A" },
+  domain: { type: String, default: "N/A" },
+  dob: { type: Date },
+  linkedin: { type: String },
+  resume: { type: String },
+  profilePic: { type: String },
+  graduationYear: { type: Number },
+  week: { type: String },
   tasks: [{ type: String }],
-  bio: String,
+  bio: { type: String },
   assignedProjects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Project' }],
-  attendance: [{
-    date: { type: Date, default: Date.now },
-    status: { type: String, enum: ['Present', 'Absent', 'Late'], required: true },
-    timeIn: { type: String },
-    timeOut: { type: String },
-    notes: { type: String }
-  }],
+  attendance: [attendanceSchema],
   progressUpdates: [progressUpdateSchema],
   createdAt: { type: Date, default: Date.now },
   lastActive: { type: Date, default: Date.now },
@@ -55,7 +56,11 @@ const studentSchema = new mongoose.Schema({
     twoFactorAuth: { type: Boolean, default: false },
     requirePasswordReset: { type: Boolean, default: false },
     sessionTimeout: { type: Number, default: 30 }
-  }
+  },
+  progress: { type: Number, default: 0 },
+  duration: { type: Number, default: 3 },
+  status: { type: String, default: 'Active' },
+  joiningDate: { type: Date, default: Date.now }
 });
 
 module.exports = mongoose.model("Student", studentSchema);
