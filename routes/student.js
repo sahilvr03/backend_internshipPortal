@@ -3,41 +3,42 @@ const router = express.Router();
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const Student = require("../models/Student");
-const PendingStudent = require("../models/pendingStudents"); // Ensure this path is correct
+const PendingStudent = require("../models/pendingStudents");
 const Project = require("../models/Project");
 const authenticateToken = require("../middleware/auth");
-require("dotenv").config(); // Ensure dotenv is loaded for JWT_SECRET
+require("dotenv").config();
 
-
-// Student Registration
+// Student Registration - Stores in PendingStudent collection for admin approval
 router.post("/register", async (req, res) => {
     console.log("--- Student Registration Attempt ---");
-    const { name, email, username, password, contactNumber, program, university, bio } = req.body;
-    console.log("Registration request body:", req.body);
+    const { name, email, username, password, contactNumber, program, university, graduationYear, bio, domain, weeks, dob, linkedin, resume, profilePic } = req.body;
 
     try {
+        // Validate required fields
         if (!name || !email || !username || !password) {
-            console.warn("Registration error: Missing required fields (name, email, username, password)");
+            console.warn("Registration error: Missing required fields");
             return res.status(400).json({ error: "Name, email, username, and password are required." });
         }
 
-        // Check if email or username already exists in active students
+        // Check for existing active student
         const existingStudent = await Student.findOne({ $or: [{ email }, { username }] });
         if (existingStudent) {
-            console.warn(`Registration error: Email (${email}) or username (${username}) already in use by an active student.`);
-            return res.status(400).json({ error: "Email or username is already in use by an active student account. Please use different credentials or log in." });
+            console.warn(`Registration error: Email (${email}) or username (${username}) already in use`);
+            return res.status(400).json({ error: "Email or username is already in use by an active student account." });
         }
 
-        // Check if email or username already exists in pending students
+        // Check for existing pending student
         const existingPendingStudent = await PendingStudent.findOne({ $or: [{ email }, { username }] });
         if (existingPendingStudent) {
-            console.warn(`Registration error: Email (${email}) or username (${username}) already has a pending registration.`);
-            return res.status(400).json({ error: "A registration request is already pending for this email or username. Please await admin approval." });
+            console.warn(`Registration error: Pending registration for email (${email}) or username (${username})`);
+            return res.status(400).json({ error: "A registration request is already pending for this email or username." });
         }
 
+        // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
-        console.log("Password hashed successfully.");
+        console.log("Password hashed successfully");
 
+        // Create new pending student
         const pendingStudent = new PendingStudent({
             name,
             email,
@@ -48,10 +49,17 @@ router.post("/register", async (req, res) => {
             university,
             graduationYear,
             bio,
+            domain,
+            weeks,
+            dob,
+            linkedin,
+            resume,
+            profilePic,
+            createdAt: new Date(),
         });
 
         await pendingStudent.save();
-        console.log("Pending student saved successfully:", pendingStudent._id);
+        console.log("Pending student saved:", pendingStudent._id);
 
         res.status(201).json({ message: "Registration request submitted successfully. Awaiting admin approval." });
     } catch (error) {
@@ -61,71 +69,149 @@ router.post("/register", async (req, res) => {
         console.log("--- Student Registration Attempt End ---");
     }
 });
+
+// Get All Pending Students - Admin only
+router.get("/pending-students", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            console.warn("Unauthorized access to pending students");
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+
+        const pendingStudents = await PendingStudent.find().select('-password');
+        console.log(`Fetched ${pendingStudents.length} pending students`);
+        res.json(pendingStudents);
+    } catch (error) {
+        console.error("Error fetching pending students:", error);
+        res.status(500).json({ error: "Error fetching pending students: " + error.message });
+    }
+});
+
+// Accept Pending Student - Admin only
+router.post("/pending-students/:id/accept", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            console.warn("Unauthorized attempt to accept pending student");
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+
+        const pendingStudent = await PendingStudent.findById(req.params.id);
+        if (!pendingStudent) {
+            console.warn(`Pending student not found: ${req.params.id}`);
+            return res.status(404).json({ error: "Pending student not found" });
+        }
+
+        // Create new active student
+        const newStudent = new Student({
+            name: pendingStudent.name,
+            email: pendingStudent.email,
+            username: pendingStudent.username,
+            password: pendingStudent.password,
+            contactNumber: pendingStudent.contactNumber,
+            program: pendingStudent.program,
+            university: pendingStudent.university,
+            graduationYear: pendingStudent.graduationYear,
+            bio: pendingStudent.bio,
+            domain: pendingStudent.domain,
+            weeks: pendingStudent.weeks,
+            dob: pendingStudent.dob,
+            linkedin: pendingStudent.linkedin,
+            resume: pendingStudent.resume,
+            profilePic: pendingStudent.profilePic,
+            role: 'student',
+            joinDate: new Date(),
+            notificationSettings: pendingStudent.notificationSettings,
+            securitySettings: pendingStudent.securitySettings,
+            status: 'Active',
+            createdAt: new Date(),
+            lastActive: new Date(),
+            lastLogin: new Date(),
+        });
+
+        const savedStudent = await newStudent.save();
+        console.log(`Student approved: ${savedStudent._id}`);
+
+        // Delete from pending students
+        await PendingStudent.findByIdAndDelete(req.params.id);
+        console.log(`Pending student deleted: ${req.params.id}`);
+
+        res.json({ message: "Student approved and added to active students", studentId: savedStudent._id });
+    } catch (error) {
+        console.error("Error accepting pending student:", error);
+        res.status(500).json({ error: "Error accepting pending student: " + error.message });
+    }
+});
+
+// Reject Pending Student - Admin only
+router.post("/pending-students/:id/reject", authenticateToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            console.warn("Unauthorized attempt to reject pending student");
+            return res.status(403).json({ error: "Access denied. Admin only." });
+        }
+
+        const pendingStudent = await PendingStudent.findById(req.params.id);
+        if (!pendingStudent) {
+            console.warn(`Pending student not found: ${req.params.id}`);
+            return res.status(404).json({ error: "Pending student not found" });
+        }
+
+        await PendingStudent.findByIdAndDelete(req.params.id);
+        console.log(`Pending student rejected and deleted: ${req.params.id}`);
+
+        res.json({ message: "Student registration request rejected" });
+    } catch (error) {
+        console.error("Error rejecting pending student:", error);
+        res.status(500).json({ error: "Error rejecting pending student: " + error.message });
+    }
+});
+
 // Student Login
 router.post("/login", async (req, res) => {
     console.log("--- Student Login Attempt ---");
     const { username, email, password } = req.body;
-    console.log("Login attempt for:", { username, email });
 
     try {
-        if (!password) {
-            console.warn("Login error: Password is required.");
-            return res.status(400).json({ error: "Password is required." });
+        // Validate input
+        if (!password || (!username && !email)) {
+            console.warn("Login error: Missing required fields");
+            return res.status(400).json({ error: "Password and either username or email are required." });
         }
 
-        if (!username && !email) {
-            console.warn("Login error: Username or email is required.");
-            return res.status(400).json({ error: "Username or email is required." });
-        }
-
-        // --- IMPORTANT: Check for pending students FIRST ---
-        let pendingStudentQuery = {};
-        if (username) {
-            pendingStudentQuery = { username };
-        } else {
-            pendingStudentQuery = { email };
-        }
-
-        const pendingStudent = await PendingStudent.findOne(pendingStudentQuery);
-
+        // Check for pending student
+        const pendingQuery = username ? { username } : { email };
+        const pendingStudent = await PendingStudent.findOne(pendingQuery);
         if (pendingStudent) {
-            console.log(`Login blocked: Pending registration found for ${username || email}.`);
-            return res.status(403).json({ error: "Your registration is pending admin approval. You cannot log in yet." });
-        }
-        // --- End of Pending Student Check ---
-
-        let studentQuery = {};
-        if (username) {
-            studentQuery = { username };
-        } else {
-            studentQuery = { email };
+            console.log(`Login blocked: Pending registration for ${username || email}`);
+            return res.status(403).json({ error: "Your registration is pending admin approval." });
         }
 
-        let student = await Student.findOne(studentQuery);
-
+        // Find active student
+        const studentQuery = username ? { username } : { email };
+        const student = await Student.findOne(studentQuery);
         if (!student) {
-            console.warn(`Login error: No active student found for ${username || email}.`);
+            console.warn(`Login error: No student found for ${username || email}`);
             return res.status(401).json({ error: "Invalid credentials or account not found." });
         }
 
+        // Verify password
         const isMatch = await bcrypt.compare(password, student.password);
-
         if (!isMatch) {
-            console.warn(`Login error: Password mismatch for ${student.username || student.email}.`);
+            console.warn(`Login error: Password mismatch for ${username || email}`);
             return res.status(401).json({ error: "Invalid credentials." });
         }
 
-        // If login successful, generate token
+        // Generate JWT
         const token = jwt.sign(
             { id: student._id, role: student.role || 'student' },
             process.env.JWT_SECRET,
             { expiresIn: "1d" }
         );
-        console.log(`Login successful for student ${student.username || student.email}. Token generated.`);
+        console.log(`Login successful for ${student.username || student.email}`);
 
-        // Update last active/login time
+        // Update last active and login times
         student.lastActive = new Date();
-        student.lastLogin = new Date(); // Added this for consistency
+        student.lastLogin = new Date();
         await student.save();
 
         res.json({
@@ -185,7 +271,7 @@ router.get("/projects/:projectId", authenticateToken, async (req, res) => {
         }
 
         const student = await Student.findById(req.user.id);
-        if (!student || (!student.assignedProjects.includes(projectId) && req.user.role !== 'admin')) { // Added !student check
+        if (!student || (!student.assignedProjects.includes(projectId) && req.user.role !== 'admin')) {
             return res.status(403).json({ error: "Access denied" });
         }
 
@@ -196,10 +282,10 @@ router.get("/projects/:projectId", authenticateToken, async (req, res) => {
     }
 });
 
-// Submit Project Update (NOTE: This seems to be a general progress update, not specific to a project, though named for it)
+// Submit Project Update
 router.post("/progress/:projectId", authenticateToken, async (req, res) => {
     try {
-        const { projectId } = req.params; // This projectId is not used in the progressUpdates push
+        const { projectId } = req.params;
         const { content } = req.body;
 
         if (!content) {
@@ -211,29 +297,22 @@ router.post("/progress/:projectId", authenticateToken, async (req, res) => {
             return res.status(404).json({ error: "Student not found" });
         }
 
-        // Logic to check if student is assigned to this projectId, if this route is meant for project-specific updates
-        // if (!student.assignedProjects.includes(projectId) && req.user.role !== 'admin') {
-        //     return res.status(403).json({ error: "Access denied: Not assigned to this project." });
-        // }
-
         const progressUpdate = {
             date: new Date(),
             content
         };
 
-        if (!student.progressUpdates) { // Initialize if null/undefined
+        if (!student.progressUpdates) {
             student.progressUpdates = [];
         }
         student.progressUpdates.push(progressUpdate);
 
-        // Update project status to "In Progress" if it was "Not Started"
         const project = await Project.findById(projectId);
-        if (project) { // Check if project exists
+        if (project) {
             if (project.status === "Not Started") {
                 project.status = "In Progress";
             }
             project.lastModified = new Date();
-            // Also add a feedback entry to the project for this progress update
             project.feedback.push({
                 comment: `Student ${student.name} submitted progress update: ${content}`,
                 from: student.name,
@@ -248,14 +327,13 @@ router.post("/progress/:projectId", authenticateToken, async (req, res) => {
 
         res.status(201).json({
             message: "Progress update submitted successfully!",
-            update: progressUpdate // Return the saved update for client-side use
+            update: progressUpdate
         });
     } catch (error) {
         console.error("Error submitting project update:", error);
         res.status(500).json({ error: "Error submitting project update: " + error.message });
     }
 });
-
 
 // Update Student Profile
 router.put("/profile", authenticateToken, async (req, res) => {
@@ -289,7 +367,7 @@ router.put("/profile", authenticateToken, async (req, res) => {
     }
 });
 
-// Submit General Progress Update (without a specific project ID in URL)
+// Submit General Progress Update
 router.post("/progress-updates", authenticateToken, async (req, res) => {
     try {
         const { content } = req.body;
@@ -317,10 +395,9 @@ router.post("/progress-updates", authenticateToken, async (req, res) => {
         student.progressUpdates.push(newProgressUpdate);
         await student.save();
 
-        // Return the created update with its ID for client-side tracking
         const createdUpdate = student.progressUpdates[student.progressUpdates.length - 1];
 
-        res.status(201).json({
+        res.status( 201).json({
             _id: createdUpdate._id,
             content: createdUpdate.content,
             timestamp: createdUpdate.timestamp,
@@ -344,7 +421,6 @@ router.get("/progress-updates", authenticateToken, async (req, res) => {
         }
 
         const updates = student.progressUpdates || [];
-        // Sort from newest to oldest
         updates.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
         res.json(updates);
